@@ -9,15 +9,18 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- Phase 1 deterministic layout cache identity based on attributed content, attributed-range-sensitive layout signatures, and attachment-aware metrics.
-- Explicit measurement policy types for exact-width, bucketed-width, and pixel-aligned measurement behavior.
-- `PreparedInvalidationCenter` and `PreparedTextSystem` invalidation / diagnostics surfaces for explicit cache invalidation, background trim, and cache observability.
+- Deterministic attributed-range cache identity across Stage 0 measurement and Stage 1 prepared layout reuse.
+- Public Phase 1 engine controls through `PreparedTextMeasurementOptions`, `PreparedTextDiagnosticsSnapshot`, and explicit invalidation wiring.
+- `PreparedInvalidationCenter` lifecycle hooks for content-size, locale, font-set, attachment, and background-trim invalidation.
+- Attachment-aware placeholder / resolver plumbing through `PreparedAttachmentRegistry` and `PreparedTextAttachment`.
+- Narrow follow-up surfaces currently also include `PreparedTextLayoutOptions`, `PreparedTextSourceCoordinateMap`, and `PreparedTextObstacleLayouter`.
+- Signpost instrumentation for hot Stage 0 / Stage 1 engine paths.
 
 ### Changed
 
-- Ongoing development happens here until the next tagged release.
-- Stage 0 and Stage 1 caches are now bounded with explicit diagnostics snapshots and cost-aware eviction reporting.
-- Benchmark reporting now covers repeated-width policy sweeps, cache hit rates, eviction counts, cache cost, and realistic Latin/Korean/CJK/emoji/attachment fixtures.
+- Benchmarks now compare exact, bucketed, and pixel-aligned policies across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text corpora.
+- README and maintainer docs now describe the repository as a reusable read-only layout engine rather than a thin text wrapper.
+- Pull request metadata now uses a conventional sectioned OSS template, while whylog remains commit-only.
 
 ## [0.1.0] - 2026-04-03
 

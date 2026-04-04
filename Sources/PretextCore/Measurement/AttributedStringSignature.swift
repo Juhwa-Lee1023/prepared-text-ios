@@ -156,6 +156,18 @@ extension NSAttributedString {
             }
             return attachmentSignature(attachment)
 
+        case NSAttributedString.Key.preparedAttachmentReference.rawValue:
+            guard let reference = value as? PreparedAttachmentReference else {
+                return nil
+            }
+            return "preparedAttachmentReference:\(reference.id.rawValue):\(reference.placeholderBounds.origin.x):\(reference.placeholderBounds.origin.y):\(reference.placeholderBounds.size.width):\(reference.placeholderBounds.size.height)"
+
+        case NSAttributedString.Key.preparedResolvedAttachmentIdentity.rawValue:
+            if let string = value as? String {
+                return "preparedResolvedAttachmentIdentity:\(string)"
+            }
+            return String(describing: value)
+
         case (kCTLanguageAttributeName as NSAttributedString.Key).rawValue,
              "NSLanguage":
             if let string = value as? String {

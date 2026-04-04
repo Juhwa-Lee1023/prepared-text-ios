@@ -132,7 +132,9 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
                 continue
 
             case let .measure(inFlight):
-                let measured = measureWithCoreText(text, width: resolvedWidth, env: env)
+                let measured = PreparedTextSignposts.measure("Stage0Measure") {
+                    measureWithCoreText(text, width: resolvedWidth, env: env)
+                }
                 let entry = MeasurementCacheEntry(size: measured, identity: identity)
 
                 lock.withLock {

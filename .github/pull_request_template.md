@@ -1,17 +1,19 @@
-## Why this change exists
+## Summary
 
-Lore-id:
+<!-- What problem does this PR solve, and what is the outcome? -->
 
-Constraint:
+## Changes
 
-Rejected:
+<!-- List the main code, documentation, or workflow changes in this PR. -->
 
-Directive:
+## Testing
 
-Tested:
+<!-- List the commands you ran and the important results. If something was not tested, say so and explain why. -->
 
-Not-tested:
+## Risks and follow-ups
 
-Confidence: medium
-Scope-risk: medium
-Reversibility: clean
+<!-- Call out rollout risk, known limitations, or follow-up work. Write `- None.` if there is nothing notable. -->
+
+## Related issues
+
+<!-- Link the issue if there is one. Examples: `Closes #123`, `Refs #456`, or `- None.` -->

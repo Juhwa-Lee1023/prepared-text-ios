@@ -1,11 +1,17 @@
 # Validation
 
 prepared-text-ios ships two validation paths and one Apple-platform verification path.
-Phase 1 also expects the benchmark runner to be part of release discipline because cache reuse and repeated-width behavior are now part of the public performance story.
+The current Phase 1 host coverage locks down:
+
+- deterministic attributed-range cache identity
+- width bucketization and pixel alignment behavior
+- attachment-aware invalidation / placeholder reuse paths
+
+Additional narrow-surface follow-up coverage also exists in host and simulator tests, but it is not the primary Phase 1 claim.
 
 ## Host report
 
-Use report mode to generate the human-readable validation report:
+Use report mode to regenerate the human-readable validation artifact:
 
 ```bash
 swift run PretextValidation --mode report
@@ -17,8 +23,7 @@ Or from the repo helper:
 ./scripts/run-validation.sh
 ```
 
-The helper writes to `.build/reports/validation-report.md` by default.
-Override the output path with `PRETEXT_VALIDATION_OUTPUT` if you need to store the report elsewhere locally.
+This writes `.build/reports/validation-report.md`.
 
 Report mode is intentionally descriptive. It prints the current host-side comparison report and semantic check results, but it does not fail on baseline diffs by itself.
 
@@ -94,7 +99,6 @@ swift build
 swift test
 swift run PretextValidation --mode report
 swift run PretextValidation --mode gate
-swift run PretextBenchmarks
 ./scripts/run-ios-demo-tests.sh
 ```
 
@@ -104,9 +108,10 @@ Or use the combined helper:
 ./scripts/run-release-checks.sh
 ```
 
-Review the validation output together with the benchmark report. A clean release candidate should show:
+For performance verification, pair the validation gate with:
 
-- no stable-corpus gate regressions
-- plausible repeated-width cache hit rates
-- no obvious eviction explosions
-- no suspicious attachment or CJK-only performance cliffs in the benchmark output
+```bash
+./scripts/run-benchmarks.sh
+```
+
+The benchmark report now compares exact widths, 4pt bucketed widths, and pixel-aligned measurement across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text fixtures.

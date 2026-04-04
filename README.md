@@ -139,44 +139,69 @@ The package product names stay as they are today:
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 Engine Notes
+## Phase 1 engine improvements
 
-Phase 1 makes the library behave more like a reusable layout engine for read-only repeated-width surfaces.
+The current library story is stronger than "a text view wrapper".
+It now behaves like a reusable layout engine for read-only repeated-width surfaces:
 
-- cache identity is deterministic and attributed-range-aware rather than plain-string-only
-- inline attachment metrics participate in layout identity where they affect measurement
-- width normalization is explicit through `PreparedTextMeasurementOptions`
-- pixel-aligned measurement is an opt-in public mode rather than a hidden heuristic
-- invalidation and background trimming are explicit through `PreparedInvalidationCenter` / `PreparedTextSystem`
-- diagnostics are available through `PreparedTextSystem.diagnosticsSnapshot()`
+- deterministic attributed-range cache identity for Stage 0 and Stage 1 reuse
+- explicit width normalization through `WidthNormalizationPolicy`
+- public pixel-aligned measurement through `PreparedTextMeasurementOptions`
+- explicit invalidation through `PreparedInvalidationCenter`
+- public diagnostics through `PreparedTextDiagnosticsSnapshot`
+- attachment-aware placeholder/resolver plumbing through `PreparedAttachmentRegistry`
 
 Example:
 
 ```swift
-let measurementOptions = PreparedTextMeasurementOptions(
-    widthNormalizationPolicy: .bucketed(points: 4),
-    pixelMeasurementPolicy: .alignedToScale
+import PretextCore
+
+let system = PreparedTextSystem.shared
+let prepared = system.prepare(
+    NSAttributedString(string: "Prepared body copy"),
+    sourceID: .init("feed/body")
 )
 
-let label = MeasurementCachingLabel().prepared(
-    sourceID: .init("feed/body"),
-    measurementOptions: measurementOptions
+let measurementEnv = MeasurementEnv(
+    scale: 2,
+    contentSizeCategory: "large",
+    measurementOptions: PreparedTextMeasurementOptions(
+        widthNormalizationPolicy: .bucketed(points: 4),
+        pixelMeasurementPolicy: .alignedToScale
+    )
+)
+let layoutOptions = PreparedTextLayoutOptions(
+    maximumNumberOfLines: 2,
+    lineBreakMode: .truncateTail,
+    alignment: .natural,
+    layoutDirection: .leftToRight
 )
 
-let preparedView = PreparedLabelView().prepared(
-    attributedText: NSAttributedString(string: "Prepared body copy"),
-    sourceID: .init("feed/body"),
-    measurementOptions: measurementOptions,
-    maxLayoutWidth: 320
+let packet = system.displayLayoutPacket(
+    prepared,
+    maxWidth: 320,
+    lineHeight: prepared.defaultLineHeight,
+    containerWidth: 320,
+    env: measurementEnv,
+    options: layoutOptions
 )
-
-let diagnostics = PreparedTextSystem.shared.diagnosticsSnapshot()
-PreparedInvalidationCenter.shared.trimForBackground()
+let diagnostics = system.diagnosticsSnapshot()
+let coordinateMap = packet.sourceCoordinateMap
 ```
 
-Use exact-width identity when width precision is semantically important.
-Use bucketed widths when self-sizing surfaces revisit nearby widths and slightly conservative height reuse is acceptable.
-Use pixel-aligned mode when fractional width churn causes repeated measurement jitter.
+Use exact widths when visual parity matters more than cache reuse.
+Use bucketed widths when self-sizing loops keep probing nearby proposals and a slight over-measure is acceptable.
+Use pixel-aligned measurement when fractional width jitter is causing unstable repeated measurement.
+
+Attachment support is now identity-aware and placeholder-aware, but it is still not a full async attachment rendering framework.
+
+Additional narrow surfaces also exist on top of the Phase 1 engine:
+
+- `PreparedTextLayoutOptions` for explicit read-only line limits, truncation, alignment, and layout direction
+- `PreparedTextSourceCoordinateMap` for displayed source-span inspection
+- `PreparedTextObstacleLayouter` for reusable circle-obstacle exclusion layout
+
+Those APIs remain intentionally narrow follow-up surfaces. They do not change the core product story into a broad text toolkit, and the main Phase 1 value is still the deterministic cache / invalidation / observability work above.
 
 ## Development
 
@@ -188,12 +213,13 @@ swift test
 swift run PretextValidation --mode report
 swift run PretextValidation --mode gate
 swift run PretextBenchmarks
+./scripts/run-benchmarks.sh
 ./scripts/run-ios-demo-tests.sh
 ./scripts/run-release-checks.sh
 ./scripts/check-repo-readiness.sh
 ```
 
-whylog is scaffolded in this repository without adding npm dependencies:
+Commit workflow uses whylog in scaffold-only mode:
 
 ```bash
 npx --yes --package whylog@0.4.0 whylog doctor
@@ -201,18 +227,12 @@ npx --yes --package whylog@0.4.0 whylog commit -i
 npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict
 ```
 
-The `validate-whylog` workflow stays independent from the other GitHub Actions checks while the repository adopts structured trailers gradually, and its on-demand fallback is pinned to whylog `0.4.0`.
-
 Maintainer and release docs:
 
 - [Maintainers guide](docs/MAINTAINERS.md)
 - [Versioning](docs/VERSIONING.md)
 - [Releasing](docs/RELEASING.md)
 - [Repository setup](docs/REPOSITORY_SETUP.md)
-- [Validation](docs/Validation.md)
-- [Benchmarks](docs/Benchmarks.md)
-- [Migration guide](docs/MigrationGuide.md)
-- [Known gaps](docs/KnownGaps.md)
 
 ## Demo app
 

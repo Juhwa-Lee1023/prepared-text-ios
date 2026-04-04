@@ -14,7 +14,7 @@ This repository is positioned as a **stable** library release for its documented
 ## Layout And Baseline Limits
 
 - Release validation is intentionally split:
-  - host report mode keeps a Core Text proxy report in `.build/reports/validation-report.md` by default
+  - host report mode keeps a Core Text proxy report in `.build/reports/validation-report.md`
   - host gate mode enforces the stable release corpus and fails on line-count, divergent-line, or height regressions
   - iOS simulator XCTest remains the Apple-platform authority through `UILabel` and `UITextView` baselines for the supported UIKit release subset
 - The stable release corpus is narrower than broad browser-grade typography parity.
@@ -24,6 +24,7 @@ This repository is positioned as a **stable** library release for its documented
 ## Surface Limits
 
 - `PreparedLabelView` supports line limits, truncation, alignment, and read-only link activation, but it is still not a full `UILabel` replacement.
+- The promoted `PreparedTextLayoutOptions` surface intentionally covers line limits, truncation, alignment, and layout direction only. It is not a full paragraph layout or annotation framework.
 - Link accessibility is exposed for read-only content, but multiple links inside one label are surfaced as custom accessibility actions rather than distinct accessibility elements.
 - `PreparedTextView` is a UIKit bridge. It does not replace native SwiftUI `Text` internals.
 - `UILabel().prepared()` and global legacy UILabel support are Stage 0 sizing helpers only. They do not swap UILabel drawing for the Stage 1 renderer.
@@ -32,12 +33,13 @@ This repository is positioned as a **stable** library release for its documented
 - UILabel subclasses that heavily override sizing behavior may not automatically benefit from the base-class swizzled Stage 0 adoption path.
 - Zero-argument `Text.prepared()` is intentionally unsupported. The package does not introspect native SwiftUI `Text`.
 - Experimental `Text.prepared(source:)` is syntax sugar only: the explicit `source` payload is authoritative, and existing `Text` modifiers are not automatically preserved.
+- `PreparedTextObstacleLayouter` is intentionally narrow: it handles repeated-width prepared text with circular exclusion zones. It is not a generalized obstacle or magazine-style flow layout engine.
 
 ## Cache And Runtime Limits
 
 - Stage 0 and Stage 1 caches are bounded and trimmed for UIKit memory pressure, but they are tuned for read-mostly UI, not document editors.
-- Width bucketization is optional and intentionally conservative. It can slightly over-measure height in exchange for more cache reuse on repeated-width self-sizing flows.
-- Pixel-aligned measurement reduces repeated-measurement jitter for fractional width proposals, but it is not a promise of perfect cross-script visual parity.
 - Performance claims are scoped to repeated-width read-only sizing workloads. Always benchmark inside the adopting app.
-- Attachment-aware cache identity is improved in this phase, but the package still does not ship a full async attachment resolver, placeholder pipeline, or general attachment framework.
+- Attachment identity and placeholder metrics now participate in prepared layout reuse, but the repository still does not ship a full async attachment loader / placeholder renderer pipeline.
+- `PreparedTextSourceCoordinateMap` exposes displayed source spans, but it is not a token API, annotation system, or full editor coordinate model.
+- Signpost instrumentation exists for hot paths, but it is still lightweight profiling support rather than a complete tracing product.
 - The demo app and showcase surfaces are verification tools for release readiness; they are not a second product surface.

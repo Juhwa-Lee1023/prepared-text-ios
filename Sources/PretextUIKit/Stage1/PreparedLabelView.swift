@@ -11,9 +11,7 @@ public struct PreparedLabelConfiguration {
     public var lineHeightOverride: CGFloat?
     public var measurementOptions: PreparedTextMeasurementOptions
     public var maxLayoutWidth: CGFloat?
-    public var numberOfLines: Int
-    public var lineBreakMode: NSLineBreakMode
-    public var textAlignment: NSTextAlignment?
+    public var layoutOptions: PreparedTextLayoutOptions
     public var automaticallyOpensLinks: Bool
     public var linkTapHandler: ((URL) -> Void)?
 
@@ -25,6 +23,7 @@ public struct PreparedLabelConfiguration {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -38,12 +37,31 @@ public struct PreparedLabelConfiguration {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
     }
+
+    public var numberOfLines: Int {
+        get { layoutOptions.maximumNumberOfLines }
+        set { layoutOptions.maximumNumberOfLines = max(newValue, 0) }
+    }
+
+    public var lineBreakMode: NSLineBreakMode {
+        get { layoutOptions.lineBreakMode.nsLineBreakMode }
+        set { layoutOptions.lineBreakMode = PreparedTextLineBreakMode(newValue) }
+    }
+
+    public var textAlignment: NSTextAlignment? {
+        get { layoutOptions.alignment.nsTextAlignment }
+        set { layoutOptions.alignment = PreparedTextHorizontalAlignment(newValue) }
+    }
+
     fileprivate func layoutSnapshot() -> PreparedLabelLayoutSnapshot {
         PreparedLabelLayoutSnapshot(configuration: self)
     }
@@ -85,6 +103,13 @@ public final class PreparedLabelView: UIView {
         get { configuration.textAlignment ?? .natural }
         set {
             updateConfiguration { $0.textAlignment = newValue }
+        }
+    }
+
+    public var layoutOptions: PreparedTextLayoutOptions {
+        get { configuration.layoutOptions }
+        set {
+            updateConfiguration { $0.layoutOptions = newValue }
         }
     }
 
@@ -271,6 +296,12 @@ public final class PreparedLabelView: UIView {
         return nil
     }
 
+    public func sourceCoordinateMap() -> PreparedTextSourceCoordinateMap? {
+        let layoutWidth = resolvedDrawWidth()
+        let containerWidth = bounds.width > 0 ? bounds.width : layoutWidth
+        return resolvedDisplayPacket(layoutWidth: layoutWidth, containerWidth: containerWidth)?.sourceCoordinateMap
+    }
+
     @discardableResult
     public func activateLink(at point: CGPoint) -> Bool {
         guard let url = link(at: point) else {
@@ -361,7 +392,7 @@ public final class PreparedLabelView: UIView {
         return textSystem.layoutPacket(prepared, maxWidth: width, lineHeight: lineHeight, env: measurementEnv())
     }
 
-    private func resolvedDisplayPacket(layoutWidth: CGFloat, containerWidth: CGFloat) -> PreparedDisplayPacket? {
+    private func resolvedDisplayPacket(layoutWidth: CGFloat, containerWidth: CGFloat) -> PreparedTextDisplayPacket? {
         guard let prepared = resolvedPreparedText() else {
             return nil
         }
@@ -373,415 +404,36 @@ public final class PreparedLabelView: UIView {
                prepared: prepared,
                layoutWidth: resolvedLayoutWidth,
                containerWidth: resolvedContainerWidth,
-               numberOfLines: configuration.numberOfLines,
-               lineBreakMode: configuration.lineBreakMode,
-               textAlignment: configuration.textAlignment
+               layoutOptions: resolvedLayoutOptions()
            ) {
             return cachedDisplayPacket.packet
         }
 
-        guard let layoutPacket = resolvedLayoutPacket(width: resolvedLayoutWidth) else {
-            return nil
-        }
-
-        let displayPacket = buildDisplayPacket(
-            prepared: prepared,
-            layoutPacket: layoutPacket,
-            layoutWidth: resolvedLayoutWidth,
-            containerWidth: resolvedContainerWidth
+        let lineHeight = configuration.lineHeightOverride ?? prepared.defaultLineHeight
+        let displayPacket = textSystem.displayLayoutPacket(
+            prepared,
+            maxWidth: resolvedLayoutWidth,
+            lineHeight: lineHeight,
+            containerWidth: resolvedContainerWidth,
+            env: measurementEnv(),
+            options: resolvedLayoutOptions()
         )
         cachedDisplayPacket = CachedDisplayPacket(
             prepared: prepared,
             layoutWidth: resolvedLayoutWidth,
             containerWidth: resolvedContainerWidth,
-            numberOfLines: configuration.numberOfLines,
-            lineBreakMode: configuration.lineBreakMode,
-            textAlignment: configuration.textAlignment,
+            layoutOptions: resolvedLayoutOptions(),
             packet: displayPacket
         )
         return displayPacket
     }
 
-    private func buildDisplayPacket(
-        prepared: PreparedText,
-        layoutPacket: PreparedLayoutPacket,
-        layoutWidth: CGFloat,
-        containerWidth: CGFloat
-    ) -> PreparedDisplayPacket {
-        let visibleLineCount = configuration.numberOfLines > 0
-            ? min(configuration.numberOfLines, layoutPacket.lines.count)
-            : layoutPacket.lines.count
-
-        guard visibleLineCount > 0 else {
-            return PreparedDisplayPacket(
-                result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0),
-                lines: []
-            )
+    private func resolvedLayoutOptions() -> PreparedTextLayoutOptions {
+        var resolved = configuration.layoutOptions
+        if resolved.layoutDirection == .natural {
+            resolved.layoutDirection = effectiveUserInterfaceLayoutDirection == .rightToLeft ? .rightToLeft : .leftToRight
         }
-
-        let isClipped = visibleLineCount < layoutPacket.lines.count
-        var lines: [PreparedDisplayLine] = []
-        lines.reserveCapacity(visibleLineCount)
-
-        for index in 0..<visibleLineCount {
-            let sourceLine = layoutPacket.lines[index]
-            if isClipped, index == visibleLineCount - 1 {
-                lines.append(
-                    makeFinalDisplayLine(
-                        prepared: prepared,
-                        sourceLine: sourceLine,
-                        layoutWidth: layoutWidth,
-                        containerWidth: containerWidth
-                    )
-                )
-            } else {
-                lines.append(makeDisplayLine(from: sourceLine, containerWidth: containerWidth))
-            }
-        }
-
-        let result = LayoutResult(
-            fragments: lines.map(\.fragment),
-            height: lines.reduce(0) { $0 + $1.fragment.blockAdvance },
-            maxPaintWidth: lines.map(\.lineWidth).max() ?? 0
-        )
-        return PreparedDisplayPacket(result: result, lines: lines)
-    }
-
-    private func makeDisplayLine(from sourceLine: PreparedDrawLine, containerWidth: CGFloat) -> PreparedDisplayLine {
-        let alignment = resolvedAlignment(for: sourceLine.attributedText)
-        let originX = horizontalOrigin(
-            alignment: alignment,
-            lineWidth: sourceLine.fragment.paintWidth,
-            containerWidth: containerWidth
-        )
-        return PreparedDisplayLine(
-            fragment: sourceLine.fragment,
-            attributedText: sourceLine.attributedText,
-            ctLine: sourceLine.ctLine,
-            lineWidth: sourceLine.fragment.paintWidth,
-            originX: originX,
-            isTruncated: false,
-            visibleRange: NSRange(location: 0, length: sourceLine.attributedText.length)
-        )
-    }
-
-    private func makeFinalDisplayLine(
-        prepared: PreparedText,
-        sourceLine: PreparedDrawLine,
-        layoutWidth: CGFloat,
-        containerWidth: CGFloat
-    ) -> PreparedDisplayLine {
-        switch configuration.lineBreakMode {
-        case .byWordWrapping, .byCharWrapping:
-            return makeDisplayLine(from: sourceLine, containerWidth: containerWidth)
-        default:
-            break
-        }
-
-        let remainder = textSystem.attributedText(
-            prepared,
-            from: sourceLine.fragment.start,
-            to: nil,
-            flatteningHardBreaks: false
-        )
-        guard remainder.length > 0 else {
-            return makeDisplayLine(from: sourceLine, containerWidth: containerWidth)
-        }
-
-        let truncationSource = truncationSourceText(from: remainder)
-        let truncation = truncationConfiguration(
-            for: configuration.lineBreakMode,
-            attributes: truncationTokenAttributes(sourceLine: sourceLine, remainder: truncationSource)
-        )
-        let renderedLine = renderedTruncatedLine(
-            source: truncationSource,
-            width: layoutWidth,
-            mode: configuration.lineBreakMode,
-            truncationType: truncation.type,
-            token: truncation.token,
-            forceTokenWhenFits: truncationSource.length < remainder.length
-        )
-
-        var ascent: CGFloat = 0
-        var descent: CGFloat = 0
-        var leading: CGFloat = 0
-        let measuredWidth = CGFloat(CTLineGetTypographicBounds(renderedLine.ctLine, &ascent, &descent, &leading))
-        var fragment = sourceLine.fragment
-        fragment.fitWidth = min(layoutWidth, measuredWidth)
-        fragment.paintWidth = min(layoutWidth, measuredWidth)
-        fragment.trailingWhitespaceWidth = 0
-        fragment.ascent = max(fragment.ascent, ascent)
-        fragment.descent = max(fragment.descent, descent)
-        fragment.leading = max(fragment.leading, leading)
-
-        let alignment = resolvedAlignment(for: renderedLine.attributedText)
-        let originX = horizontalOrigin(
-            alignment: alignment,
-            lineWidth: fragment.paintWidth,
-            containerWidth: containerWidth
-        )
-
-        return PreparedDisplayLine(
-            fragment: fragment,
-            attributedText: renderedLine.attributedText,
-            ctLine: renderedLine.ctLine,
-            lineWidth: fragment.paintWidth,
-            originX: originX,
-            isTruncated: true,
-            visibleRange: renderedLine.visibleRange
-        )
-    }
-
-    private func truncationSourceText(from remainder: NSAttributedString) -> NSAttributedString {
-        let string = remainder.string as NSString
-        let hardBreakRange = string.rangeOfCharacter(from: .newlines)
-        guard hardBreakRange.location != NSNotFound else {
-            return remainder
-        }
-
-        let prefixRange = NSRange(location: 0, length: hardBreakRange.location)
-        guard prefixRange.length > 0 else {
-            return NSAttributedString(string: "")
-        }
-
-        return remainder.attributedSubstring(from: prefixRange)
-    }
-
-    private func renderedTruncatedLine(
-        source: NSAttributedString,
-        width: CGFloat,
-        mode: NSLineBreakMode,
-        truncationType: CTLineTruncationType,
-        token: NSAttributedString?,
-        forceTokenWhenFits: Bool
-    ) -> (attributedText: NSAttributedString, ctLine: CTLine, visibleRange: NSRange) {
-        let baseLine = CTLineCreateWithAttributedString(source as CFAttributedString)
-        let tokenLine = token.map { CTLineCreateWithAttributedString($0 as CFAttributedString) }
-        let maybeTruncated = CTLineCreateTruncatedLine(baseLine, Double(width), truncationType, tokenLine)
-
-        if let maybeTruncated {
-            let visibleRange = nsRange(for: CTLineGetStringRange(maybeTruncated))
-            let consumedAllSource = NSMaxRange(visibleRange) >= source.length
-            if !forceTokenWhenFits || token == nil || token?.length == 0 || !consumedAllSource {
-                return (source, maybeTruncated, visibleRange)
-            }
-        }
-
-        guard forceTokenWhenFits, let token, token.length > 0 else {
-            let ctLine = maybeTruncated ?? baseLine
-            return (source, ctLine, nsRange(for: CTLineGetStringRange(ctLine)))
-        }
-
-        let forcedText = forceTruncationToken(on: source, token: token, mode: mode, width: width)
-        let forcedLine = CTLineCreateWithAttributedString(forcedText as CFAttributedString)
-        return (
-            forcedText,
-            forcedLine,
-            NSRange(location: 0, length: forcedText.length)
-        )
-    }
-
-    private func forceTruncationToken(
-        on source: NSAttributedString,
-        token: NSAttributedString,
-        mode: NSLineBreakMode,
-        width: CGFloat
-    ) -> NSAttributedString {
-        switch mode {
-        case .byTruncatingHead:
-            return longestFittingSuffix(source: source, token: token, width: width)
-        case .byTruncatingMiddle:
-            return longestFittingMiddle(source: source, token: token, width: width)
-        case .byTruncatingTail:
-            return longestFittingPrefix(source: source, token: token, width: width)
-        case .byClipping, .byWordWrapping, .byCharWrapping:
-            return source
-        @unknown default:
-            return longestFittingPrefix(source: source, token: token, width: width)
-        }
-    }
-
-    private func longestFittingPrefix(source: NSAttributedString, token: NSAttributedString, width: CGFloat) -> NSAttributedString {
-        let tokenOnly = token
-        if lineWidth(for: tokenOnly) > width {
-            return NSAttributedString(string: "")
-        }
-
-        var low = 0
-        var high = source.length
-        var best = 0
-        while low <= high {
-            let mid = (low + high) / 2
-            let candidate = NSMutableAttributedString(attributedString: source.attributedSubstring(from: NSRange(location: 0, length: mid)))
-            candidate.append(token)
-            if lineWidth(for: candidate) <= width {
-                best = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-
-        let result = NSMutableAttributedString(attributedString: source.attributedSubstring(from: NSRange(location: 0, length: best)))
-        result.append(token)
-        return result
-    }
-
-    private func longestFittingSuffix(source: NSAttributedString, token: NSAttributedString, width: CGFloat) -> NSAttributedString {
-        if lineWidth(for: token) > width {
-            return NSAttributedString(string: "")
-        }
-
-        var low = 0
-        var high = source.length
-        var best = 0
-        while low <= high {
-            let mid = (low + high) / 2
-            let start = max(source.length - mid, 0)
-            let candidate = NSMutableAttributedString(attributedString: token)
-            candidate.append(source.attributedSubstring(from: NSRange(location: start, length: mid)))
-            if lineWidth(for: candidate) <= width {
-                best = mid
-                low = mid + 1
-            } else {
-                high = mid - 1
-            }
-        }
-
-        let start = max(source.length - best, 0)
-        let result = NSMutableAttributedString(attributedString: token)
-        result.append(source.attributedSubstring(from: NSRange(location: start, length: best)))
-        return result
-    }
-
-    private func longestFittingMiddle(source: NSAttributedString, token: NSAttributedString, width: CGFloat) -> NSAttributedString {
-        if lineWidth(for: token) > width {
-            return NSAttributedString(string: "")
-        }
-
-        var low = 0
-        var high = source.length
-        var best = 0
-        while low <= high {
-            let keptCount = (low + high) / 2
-            let candidate = middleTruncationCandidate(source: source, token: token, keptCount: keptCount)
-            if lineWidth(for: candidate) <= width {
-                best = keptCount
-                low = keptCount + 1
-            } else {
-                high = keptCount - 1
-            }
-        }
-
-        return middleTruncationCandidate(source: source, token: token, keptCount: best)
-    }
-
-    private func middleTruncationCandidate(source: NSAttributedString, token: NSAttributedString, keptCount: Int) -> NSAttributedString {
-        let clamped = max(min(keptCount, source.length), 0)
-        let frontCount = (clamped + 1) / 2
-        let backCount = clamped - frontCount
-        let result = NSMutableAttributedString()
-        if frontCount > 0 {
-            result.append(source.attributedSubstring(from: NSRange(location: 0, length: frontCount)))
-        }
-        result.append(token)
-        if backCount > 0 {
-            let start = max(source.length - backCount, 0)
-            result.append(source.attributedSubstring(from: NSRange(location: start, length: backCount)))
-        }
-        return result
-    }
-
-    private func lineWidth(for attributedText: NSAttributedString) -> CGFloat {
-        let line = CTLineCreateWithAttributedString(attributedText as CFAttributedString)
-        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
-    }
-
-    private func nsRange(for range: CFRange) -> NSRange {
-        NSRange(location: max(range.location, 0), length: max(range.length, 0))
-    }
-
-    private func truncationConfiguration(
-        for mode: NSLineBreakMode,
-        attributes: [NSAttributedString.Key: Any]
-    ) -> (type: CTLineTruncationType, token: NSAttributedString?) {
-        switch mode {
-        case .byTruncatingHead:
-            return (.start, NSAttributedString(string: "…", attributes: attributes))
-        case .byTruncatingMiddle:
-            return (.middle, NSAttributedString(string: "…", attributes: attributes))
-        case .byWordWrapping, .byCharWrapping, .byClipping:
-            return (.end, NSAttributedString(string: "", attributes: attributes))
-        case .byTruncatingTail:
-            return (.end, NSAttributedString(string: "…", attributes: attributes))
-        @unknown default:
-            return (.end, NSAttributedString(string: "…", attributes: attributes))
-        }
-    }
-
-    private func truncationTokenAttributes(
-        sourceLine: PreparedDrawLine,
-        remainder: NSAttributedString
-    ) -> [NSAttributedString.Key: Any] {
-        var attributes: [NSAttributedString.Key: Any]
-        if sourceLine.attributedText.length > 0 {
-            attributes = sourceLine.attributedText.attributes(
-                at: sourceLine.attributedText.length - 1,
-                effectiveRange: nil
-            )
-        } else if remainder.length > 0 {
-            attributes = remainder.attributes(at: remainder.length - 1, effectiveRange: nil)
-        } else {
-            attributes = [:]
-        }
-
-        attributes[.link] = nil
-        return attributes
-    }
-
-    private func resolvedAlignment(for attributedText: NSAttributedString) -> NSTextAlignment {
-        if let explicitAlignment = configuration.textAlignment {
-            return resolvedNaturalAlignment(for: explicitAlignment, attributedText: attributedText)
-        }
-
-        let paragraphAlignment = (attributedText.length > 0
-            ? (attributedText.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.alignment
-            : nil) ?? .natural
-        return resolvedNaturalAlignment(for: paragraphAlignment, attributedText: attributedText)
-    }
-
-    private func resolvedNaturalAlignment(for alignment: NSTextAlignment, attributedText: NSAttributedString) -> NSTextAlignment {
-        switch alignment {
-        case .left, .center, .right:
-            return alignment
-        case .natural, .justified:
-            let baseDirection = (attributedText.length > 0
-                ? (attributedText.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.baseWritingDirection
-                : nil) ?? .natural
-            switch baseDirection {
-            case .rightToLeft:
-                return .right
-            case .leftToRight:
-                return .left
-            default:
-                return effectiveUserInterfaceLayoutDirection == .rightToLeft ? .right : .left
-            }
-        @unknown default:
-            return effectiveUserInterfaceLayoutDirection == .rightToLeft ? .right : .left
-        }
-    }
-
-    private func horizontalOrigin(alignment: NSTextAlignment, lineWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
-        switch alignment {
-        case .center:
-            return max((containerWidth - lineWidth) / 2, 0)
-        case .right:
-            return max(containerWidth - lineWidth, 0)
-        case .left, .natural, .justified:
-            return 0
-        @unknown default:
-            return 0
-        }
+        return resolved
     }
 
     private func visibleLinks() -> [AttributedLink] {
@@ -794,7 +446,7 @@ public final class PreparedLabelView: UIView {
         var links: [AttributedLink] = []
         var seenURLs = Set<URL>()
         for line in packet.lines {
-            for link in line.visibleLinks() where seenURLs.insert(link.url).inserted {
+            for link in line.attributedText.links() where seenURLs.insert(link.url).inserted {
                 links.append(link)
             }
         }
@@ -890,26 +542,6 @@ public final class PreparedLabelView: UIView {
     }
 }
 
-private struct PreparedDisplayLine {
-    var fragment: LineFragment
-    var attributedText: NSAttributedString
-    var ctLine: CTLine
-    var lineWidth: CGFloat
-    var originX: CGFloat
-    var isTruncated: Bool
-    var visibleRange: NSRange
-
-    func frame(originY: CGFloat) -> CGRect {
-        let typographicTop = originY + fragment.paragraphSpacingBefore
-        let typographicHeight = max(fragment.ascent + fragment.descent + fragment.leading, 1)
-        return CGRect(x: originX, y: typographicTop, width: lineWidth, height: typographicHeight)
-    }
-
-    func visibleLinks() -> [AttributedLink] {
-        attributedText.links(in: visibleRange)
-    }
-}
-
 private struct PreparedLabelLayoutSnapshot: Equatable {
     var preparedText: PreparedText?
     var attributedText: NSAttributedString?
@@ -918,9 +550,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
     var lineHeightOverride: CGFloat?
     var measurementOptions: PreparedTextMeasurementOptions
     var maxLayoutWidth: CGFloat?
-    var numberOfLines: Int
-    var lineBreakMode: NSLineBreakMode
-    var textAlignment: NSTextAlignment?
+    var layoutOptions: PreparedTextLayoutOptions
 
     init(configuration: PreparedLabelConfiguration) {
         preparedText = configuration.preparedText
@@ -930,9 +560,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
         lineHeightOverride = configuration.lineHeightOverride
         measurementOptions = configuration.measurementOptions
         maxLayoutWidth = configuration.maxLayoutWidth
-        numberOfLines = configuration.numberOfLines
-        lineBreakMode = configuration.lineBreakMode
-        textAlignment = configuration.textAlignment
+        layoutOptions = configuration.layoutOptions
     }
 
     static func == (lhs: PreparedLabelLayoutSnapshot, rhs: PreparedLabelLayoutSnapshot) -> Bool {
@@ -943,9 +571,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
             lhs.lineHeightOverride == rhs.lineHeightOverride &&
             lhs.measurementOptions == rhs.measurementOptions &&
             lhs.maxLayoutWidth == rhs.maxLayoutWidth &&
-            lhs.numberOfLines == rhs.numberOfLines &&
-            lhs.lineBreakMode == rhs.lineBreakMode &&
-            lhs.textAlignment == rhs.textAlignment
+            lhs.layoutOptions == rhs.layoutOptions
     }
 
     private static func attributedTextMatches(_ lhs: NSAttributedString?, _ rhs: NSAttributedString?) -> Bool {
@@ -972,34 +598,23 @@ private struct PreparedLabelAccessibilitySnapshot: Equatable {
     }
 }
 
-private struct PreparedDisplayPacket {
-    var result: LayoutResult
-    var lines: [PreparedDisplayLine]
-}
-
 private struct CachedDisplayPacket {
     var prepared: PreparedText
     var layoutWidth: CGFloat
     var containerWidth: CGFloat
-    var numberOfLines: Int
-    var lineBreakMode: NSLineBreakMode
-    var textAlignment: NSTextAlignment?
-    var packet: PreparedDisplayPacket
+    var layoutOptions: PreparedTextLayoutOptions
+    var packet: PreparedTextDisplayPacket
 
     func matches(
         prepared: PreparedText,
         layoutWidth: CGFloat,
         containerWidth: CGFloat,
-        numberOfLines: Int,
-        lineBreakMode: NSLineBreakMode,
-        textAlignment: NSTextAlignment?
+        layoutOptions: PreparedTextLayoutOptions
     ) -> Bool {
         self.prepared == prepared &&
             self.layoutWidth == layoutWidth &&
             self.containerWidth == containerWidth &&
-            self.numberOfLines == numberOfLines &&
-            self.lineBreakMode == lineBreakMode &&
-            self.textAlignment == textAlignment
+            self.layoutOptions == layoutOptions
     }
 }
 
@@ -1070,6 +685,78 @@ private extension NSAttributedString {
             return URL(string: nsString as String)
         default:
             return nil
+        }
+    }
+}
+
+private extension PreparedTextLineBreakMode {
+    init(_ value: NSLineBreakMode) {
+        switch value {
+        case .byWordWrapping:
+            self = .wordWrap
+        case .byCharWrapping:
+            self = .characterWrap
+        case .byClipping:
+            self = .clip
+        case .byTruncatingHead:
+            self = .truncateHead
+        case .byTruncatingMiddle:
+            self = .truncateMiddle
+        case .byTruncatingTail:
+            self = .truncateTail
+        @unknown default:
+            self = .truncateTail
+        }
+    }
+
+    var nsLineBreakMode: NSLineBreakMode {
+        switch self {
+        case .wordWrap:
+            return .byWordWrapping
+        case .characterWrap:
+            return .byCharWrapping
+        case .clip:
+            return .byClipping
+        case .truncateHead:
+            return .byTruncatingHead
+        case .truncateMiddle:
+            return .byTruncatingMiddle
+        case .truncateTail:
+            return .byTruncatingTail
+        }
+    }
+}
+
+private extension PreparedTextHorizontalAlignment {
+    init(_ value: NSTextAlignment?) {
+        switch value ?? .natural {
+        case .center:
+            self = .center
+        case .right:
+            self = .right
+        case .left:
+            self = .left
+        case .natural, .justified:
+            self = .natural
+        @unknown default:
+            self = .natural
+        }
+    }
+
+    var nsTextAlignment: NSTextAlignment? {
+        switch self {
+        case .natural:
+            return nil
+        case .left:
+            return .left
+        case .leading:
+            return .left
+        case .center:
+            return .center
+        case .trailing:
+            return .right
+        case .right:
+            return .right
         }
     }
 }

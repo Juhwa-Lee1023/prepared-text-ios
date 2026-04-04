@@ -71,7 +71,4 @@ struct LayoutPacketKey: Hashable, Sendable {
     var lineHeightKey: Int
     var context: MeasurementCacheContext
     var preparedTextOptions: PreparedTextOptionsCacheContext
-    var layoutDirectionPlaceholder: String?
-    var maxLines: Int?
-    var truncationModeIdentifier: String?
 }

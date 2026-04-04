@@ -3,10 +3,11 @@
 prepared-text-ios keeps a host-side benchmark runner for the prepared-text hot paths that matter to the public release story:
 
 - Stage 0 measurement caching
-- Stage 1 warm prepare and repeated-width layout reuse
-- list-style batch sizing
-- width normalization policy comparisons
-- diagnostics snapshots for cache hit ratio, eviction count, cache cost, and layout reuse
+- Stage 1 promoted display layout reuse
+- exact vs bucketed width normalization
+- pixel-aligned measurement jitter reduction
+- Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text corpora
+- list-style batch sizing with public layout options
 
 ## Run
 
@@ -20,8 +21,20 @@ Or use the helper:
 ./scripts/run-benchmarks.sh
 ```
 
-The helper writes a local report to `.build/reports/benchmark-results.md` by default and fails if the output is empty.
-Override the path with `PRETEXT_BENCH_OUTPUT` when you need to keep a local copy elsewhere.
+The helper regenerates `.build/reports/benchmark-results.md` and fails if the artifact is empty.
+
+The release benchmark artifact should be generated with the default runner settings.
+Use environment overrides only for local smoke runs or turnaround-sensitive exploration.
+
+Useful environment overrides:
+
+```bash
+PRETEXT_BENCH_ITERATIONS=12 \
+PRETEXT_BENCH_SWEEP_REPETITIONS=6 \
+PRETEXT_BENCH_LIST_ITEMS=120 \
+PRETEXT_BENCH_LIST_BATCH_REPETITIONS=2 \
+./scripts/run-benchmarks.sh
+```
 
 ## Interpretation
 
@@ -29,51 +42,33 @@ These benchmarks run as a host-side SwiftPM CLI on macOS. They are useful for:
 
 - relative regression detection
 - repeated-width workload comparisons
-- exact-vs-bucketed width policy comparisons
-- pixel-aligned measurement comparisons
-- cache reuse sanity checks
-- verifying that diagnostics counters move in plausible directions
+- exact vs bucketed vs pixel-aligned policy comparisons
+- cache reuse sanity checks through hit rate and cache-cost indicators
 
 They are not a replacement for profiling on the final iOS app or device.
 
-The current benchmark corpus intentionally includes:
+Read the report with these rules:
 
-- Latin body text
-- Korean body text
-- Japanese/CJK body text
-- emoji-heavy copy
-- pre-wrap content
-- long unbroken tokens
-- long scrolling text
-- inline attachments where the host platform supports them
-
-The report highlights:
-
-- `p50` and `p95` latency
-- cache hit rate
-- eviction count
-- current cache cost estimate
-- layout packet reuse count
-- average observed lines per layout
-
-## Width Policy Guidance
-
-- Use `exact` when per-width identity is semantically important.
-- Use `bucketed-4pt` as the first conservative opt-in for self-sizing surfaces that revisit nearby widths.
-- Use `bucketed-4pt-aligned` when fractional proposals are causing repeated measurement jitter and you want the most stable repeated-width path.
+- higher hit rates on `bucketed-4pt` are expected for nearby width sweeps
+- `pixel-aligned` is about reducing fractional proposal jitter, not about winning every timing row
+- attachment-inline rows should stay in the corpus because cache identity must remain attachment-aware
+- list-style batch rows matter more than single cold timings when judging adoption value
 
 ## Release usage
 
-Run the benchmark runner before tagging a release:
+Run the benchmark runner before tagging a release so the generated report matches the final code:
+
+```bash
+swift run PretextBenchmarks
+```
+
+Or:
 
 ```bash
 ./scripts/run-benchmarks.sh
 ```
 
-Then review the generated local output together with validation and simulator test results.
-Look for:
+For release review, do not rely on a reduced-sample local smoke report.
+If you temporarily lower the sample counts locally, rerun the default command before merging or tagging.
 
-- hit-rate regressions in repeated-width sweeps
-- unexpected eviction spikes
-- bucketed policy wins that disappear on the realistic corpora
-- attachment-bearing fixtures behaving materially worse than plain-text fixtures
+Then review `.build/reports/benchmark-results.md` together with validation and simulator test results.

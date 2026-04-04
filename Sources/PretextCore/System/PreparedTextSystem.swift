@@ -1,5 +1,9 @@
-import Foundation
 import CoreGraphics
+import Foundation
+
+#if canImport(CoreText)
+import CoreText
+#endif
 
 #if canImport(UIKit)
 import UIKit
@@ -16,16 +20,22 @@ public final class PreparedTextSystem: NSObject {
 
     public let measurer: CachedFramesetterTextMeasurer
     public let engine: DefaultPreparedTextEngine
+    public let attachmentResolver: PreparedAttachmentResolving?
 
     private let invalidationCenter: PreparedInvalidationCenter
     private var observerTokens: [ObserverToken] = []
 
     public init(
         measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer(),
-        invalidationCenter: PreparedInvalidationCenter = .shared
+        invalidationCenter: PreparedInvalidationCenter = .shared,
+        attachmentResolver: PreparedAttachmentResolving? = PreparedAttachmentRegistry.shared
     ) {
         self.measurer = measurer
-        self.engine = DefaultPreparedTextEngine(measurer: measurer)
+        self.attachmentResolver = attachmentResolver
+        self.engine = DefaultPreparedTextEngine(
+            measurer: measurer,
+            attachmentResolver: attachmentResolver
+        )
         self.invalidationCenter = invalidationCenter
         super.init()
         registerLifecycleObservers()
@@ -91,6 +101,42 @@ public final class PreparedTextSystem: NSObject {
         env: MeasurementEnv
     ) -> PreparedLayoutPacket {
         engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
+    }
+
+    public func displayLayoutPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        containerWidth: CGFloat? = nil,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions = .default
+    ) -> PreparedTextDisplayPacket {
+        engine.displayLayoutPacket(
+            prepared,
+            maxWidth: maxWidth,
+            lineHeight: lineHeight,
+            containerWidth: containerWidth,
+            env: env,
+            options: options
+        )
+    }
+
+    public func sourceCoordinateMap(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        containerWidth: CGFloat? = nil,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions = .default
+    ) -> PreparedTextSourceCoordinateMap {
+        engine.sourceCoordinateMap(
+            prepared,
+            maxWidth: maxWidth,
+            lineHeight: lineHeight,
+            containerWidth: containerWidth,
+            env: env,
+            options: options
+        )
     }
 
     public func attributedText(
@@ -192,6 +238,20 @@ public final class PreparedTextSystem: NSObject {
                 }
             }, notificationCenter: localeCenter)
         )
+
+        #if canImport(CoreText)
+        observerTokens.append(
+            ObserverToken(rawValue: localeCenter.addObserver(
+                forName: Notification.Name(kCTFontManagerRegisteredFontsChangedNotification as String),
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyInvalidation(.init(scope: .all, reason: .fontSetChanged))
+                }
+            }, notificationCenter: localeCenter)
+        )
+        #endif
     }
 
     private func applyInvalidation(_ request: PreparedInvalidationRequest) {

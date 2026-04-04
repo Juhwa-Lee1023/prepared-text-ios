@@ -20,9 +20,7 @@ public struct PreparedCopy: View {
     private let lineHeightOverride: CGFloat?
     private let measurementOptions: PreparedTextMeasurementOptions
     private let maxLayoutWidth: CGFloat?
-    private let numberOfLines: Int
-    private let lineBreakMode: NSLineBreakMode
-    private let textAlignment: NSTextAlignment?
+    private let layoutOptions: PreparedTextLayoutOptions
     private let automaticallyOpensLinks: Bool
     private let linkTapHandler: ((URL) -> Void)?
     private let layoutBehavior: PreparedTextLayoutBehavior
@@ -35,6 +33,7 @@ public struct PreparedCopy: View {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -50,9 +49,12 @@ public struct PreparedCopy: View {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -65,6 +67,7 @@ public struct PreparedCopy: View {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -77,9 +80,12 @@ public struct PreparedCopy: View {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -92,6 +98,7 @@ public struct PreparedCopy: View {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -104,9 +111,12 @@ public struct PreparedCopy: View {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -118,6 +128,7 @@ public struct PreparedCopy: View {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -130,9 +141,12 @@ public struct PreparedCopy: View {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -148,9 +162,7 @@ public struct PreparedCopy: View {
                 lineHeightOverride: lineHeightOverride,
                 measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
-                numberOfLines: numberOfLines,
-                lineBreakMode: lineBreakMode,
-                textAlignment: textAlignment,
+                layoutOptions: layoutOptions,
                 automaticallyOpensLinks: automaticallyOpensLinks,
                 linkTapHandler: linkTapHandler,
                 layoutBehavior: layoutBehavior
@@ -163,9 +175,7 @@ public struct PreparedCopy: View {
                 lineHeightOverride: lineHeightOverride,
                 measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
-                numberOfLines: numberOfLines,
-                lineBreakMode: lineBreakMode,
-                textAlignment: textAlignment,
+                layoutOptions: layoutOptions,
                 automaticallyOpensLinks: automaticallyOpensLinks,
                 linkTapHandler: linkTapHandler,
                 layoutBehavior: layoutBehavior
