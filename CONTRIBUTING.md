@@ -78,6 +78,31 @@ You can validate a title and body locally with:
 ./scripts/check-pr.sh --title "fix(core): example" --body-file /path/to/body.md
 ```
 
+## Pull request body
+
+Use the whylog-style PR body template:
+
+```text
+## Why this change exists
+
+Lore-id: 1a2b3c4d5e
+Constraint: Keep the package surface unchanged for library consumers
+Rejected: Leave the policy mismatch in place; it would keep failing bot PR validation
+Directive: Revisit if PR automation starts generating whylog-compatible bodies
+Tested: ./scripts/check-repo-readiness.sh
+Not-tested: End-to-end GitHub Actions rerun from a forked PR
+Confidence: medium
+Scope-risk: low
+Reversibility: clean
+```
+
+Keep the entries short and concrete:
+
+- `Lore-id` is a stable lowercase hexadecimal identifier
+- `Constraint`, `Rejected`, and `Directive` capture the decision context
+- `Tested` and `Not-tested` must explain what you verified locally and what still needs review
+- `Confidence`, `Scope-risk`, and `Reversibility` must use the whylog enums
+
 ## Pull request checklist
 
 Before opening a PR:
@@ -87,7 +112,8 @@ Before opening a PR:
 - update `CHANGELOG.md` when the change is user-visible
 - keep PR scope narrow and explain what is intentionally out of scope
 - include screenshots or demo links when UI behavior changes
-- link an issue, or explicitly say `No issue`
+- record concrete `Tested` and `Not-tested` entries in the PR body
+- use `Directive` to note follow-up work or linked issues when they matter
 
 ## Filing issues
 
