@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+title: prepared-text-ios
+message: "If you use prepared-text-ios in research or publications, please cite the software using this metadata."
+type: software
+license: MIT
+authors:
+  - family-names: Lee
+    given-names: Juhwa
+repository-code: "https://github.com/Juhwa-Lee1023/prepared-text-ios"
+url: "https://github.com/Juhwa-Lee1023/prepared-text-ios"
+keywords:
+  - ios
+  - swift
+  - swiftui
+  - uikit
+  - core-text
+  - text-layout
+  - prepared-text

@@ -1,0 +1,30 @@
+name: Docs or maintenance
+description: Report documentation gaps, repository hygiene issues, or maintainer workflow work.
+title: "[docs] "
+labels:
+  - "type: docs"
+  - "status: needs-triage"
+body:
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: The release instructions still mention...
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Describe the documentation or maintenance task clearly.
+    validations:
+      required: true
+  - type: checkboxes
+    id: kind
+    attributes:
+      label: This issue is about
+      options:
+        - label: Documentation content
+        - label: Maintainer workflow or scripts
+        - label: CI or repository automation
+        - label: Community / contribution files

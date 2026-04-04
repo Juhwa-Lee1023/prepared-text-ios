@@ -1,0 +1,23 @@
+name: release-check
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  release-readiness:
+    name: release-readiness
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check repository readiness
+        run: ./scripts/check-repo-readiness.sh
+
+      - name: Run release checks
+        run: ./scripts/run-release-checks.sh

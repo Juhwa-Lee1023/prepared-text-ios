@@ -1,0 +1,46 @@
+name: Feature request
+description: Propose a scoped improvement that fits the project's declared scope.
+title: "[feature] "
+labels:
+  - "type: feature"
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please describe the problem first. This repository intentionally keeps a narrow product scope.
+  - type: input
+    id: problem
+    attributes:
+      label: Problem statement
+      placeholder: It is difficult to adopt Stage 0 in...
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: Keep the proposal concrete and scoped.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - PretextCore
+        - PretextUIKit
+        - PretextSwiftUI
+        - Validation / Benchmarks
+        - Documentation / Maintainer tooling
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: Call out anything that should explicitly stay out of scope.

@@ -1,0 +1,62 @@
+[
+  {
+    "name": "type: bug",
+    "color": "D73A4A",
+    "description": "Confirmed bug or defect"
+  },
+  {
+    "name": "type: feature",
+    "color": "0E8A16",
+    "description": "Feature request or new capability"
+  },
+  {
+    "name": "type: docs",
+    "color": "0052CC",
+    "description": "Documentation or maintainer workflow work"
+  },
+  {
+    "name": "type: maintenance",
+    "color": "5319E7",
+    "description": "Maintenance, cleanup, or repository operations"
+  },
+  {
+    "name": "area: core",
+    "color": "FBCA04",
+    "description": "PretextCore engine or measurement work"
+  },
+  {
+    "name": "area: uikit",
+    "color": "1D76DB",
+    "description": "UIKit renderer, adoption, or demo work"
+  },
+  {
+    "name": "area: swiftui",
+    "color": "C2E0C6",
+    "description": "SwiftUI bridge or demo work"
+  },
+  {
+    "name": "area: repo",
+    "color": "BFD4F2",
+    "description": "Repository setup, CI, docs, and release process"
+  },
+  {
+    "name": "status: needs-triage",
+    "color": "EDEDED",
+    "description": "Needs maintainer triage"
+  },
+  {
+    "name": "status: blocked",
+    "color": "000000",
+    "description": "Blocked on another change or external dependency"
+  },
+  {
+    "name": "priority: release-blocker",
+    "color": "B60205",
+    "description": "Must be addressed before the next release"
+  },
+  {
+    "name": "good first issue",
+    "color": "7057FF",
+    "description": "Good for a first contribution"
+  }
+]

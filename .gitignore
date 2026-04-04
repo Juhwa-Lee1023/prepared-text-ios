@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.swiftpm/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+Pretext.xcworkspace/
+.idea/
+*.orig
+*.rej
+*.swp
+*.tmp

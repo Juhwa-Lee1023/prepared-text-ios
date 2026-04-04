@@ -1,0 +1,46 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build-and-test
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check repository readiness
+        run: ./scripts/check-repo-readiness.sh
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          xcodebuild -version
+
+      - name: Swift build
+        run: swift build
+
+      - name: Swift tests
+        run: ./scripts/run-tests.sh
+
+      - name: Validation report
+        run: ./scripts/run-validation.sh
+
+      - name: Validation gate
+        run: ./scripts/run-validation-gate.sh
+
+      - name: Benchmark report
+        run: ./scripts/run-benchmarks.sh
+
+      - name: iOS demo tests
+        run: ./scripts/run-ios-demo-tests.sh

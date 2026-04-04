@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible bug in prepared-text-ios.
+title: "[bug] "
+labels:
+  - "type: bug"
+  - "status: needs-triage"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail to reproduce it.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: One-sentence description of the bug.
+      placeholder: PreparedLabelView returns the wrong height for...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide a minimal repro, command list, or sample code.
+      placeholder: |
+        1. Create a PreparedLabelView with...
+        2. Set the width to...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Xcode, Swift, and any simulator/device details.
+      placeholder: |
+        - macOS:
+        - Xcode:
+        - Swift:
+        - iOS runtime/device:
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Relevant checks
+      description: Paste any useful output from tests, validation, or benchmark runs.
+      render: shell

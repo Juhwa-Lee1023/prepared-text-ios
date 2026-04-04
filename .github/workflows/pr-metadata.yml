@@ -1,0 +1,23 @@
+name: pr-metadata
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+
+permissions:
+  contents: read
+
+jobs:
+  validate-pr-metadata:
+    name: validate-pr-metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PR title and body
+        run: python3 scripts/check-pr-metadata.py --event-json "$GITHUB_EVENT_PATH"
