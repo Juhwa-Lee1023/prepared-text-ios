@@ -20,6 +20,7 @@ public struct PreparedTextView: UIViewRepresentable {
 
     public var whiteSpaceMode: WhiteSpaceMode
     public var lineHeightOverride: CGFloat?
+    public var measurementOptions: PreparedTextMeasurementOptions
     public var maxLayoutWidth: CGFloat?
     public var numberOfLines: Int
     public var lineBreakMode: NSLineBreakMode
@@ -33,6 +34,7 @@ public struct PreparedTextView: UIViewRepresentable {
         sourceID: PreparedTextSourceID? = nil,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -46,6 +48,7 @@ public struct PreparedTextView: UIViewRepresentable {
         self.sourceID = sourceID
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -59,6 +62,7 @@ public struct PreparedTextView: UIViewRepresentable {
         preparedText: PreparedText,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -72,6 +76,7 @@ public struct PreparedTextView: UIViewRepresentable {
         self.sourceID = preparedText.sourceID
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -95,6 +100,7 @@ public struct PreparedTextView: UIViewRepresentable {
                 sourceID: sourceID,
                 whiteSpaceMode: whiteSpaceMode,
                 lineHeightOverride: lineHeightOverride,
+                measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
                 numberOfLines: numberOfLines,
                 lineBreakMode: lineBreakMode,

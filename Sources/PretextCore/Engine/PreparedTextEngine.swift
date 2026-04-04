@@ -12,10 +12,27 @@ public protocol PreparedTextEngine: AnyObject {
     func prepare(_ attributedText: NSAttributedString, options: PreparedTextOptions) -> PreparedText
     func prepare(_ attributedText: NSAttributedString, sourceID: PreparedTextSourceID, options: PreparedTextOptions) -> PreparedText
     func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult
+    func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult
     func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult?
     func attributedLine(_ prepared: PreparedText, line: LineResult) -> NSAttributedString
     func attributedText(_ prepared: PreparedText, from start: LayoutCursor, to end: LayoutCursor?, flatteningHardBreaks: Bool) -> NSAttributedString
     func invalidateCaches()
+    func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot
+}
+
+public extension PreparedTextEngine {
+    func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult {
+        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+    }
+
+    func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot {
+        PreparedTextDiagnosticsSnapshot(
+            measurementCache: MeasurementStats(),
+            preparedTextCache: CacheDiagnosticsSnapshot(),
+            layoutPacketCache: CacheDiagnosticsSnapshot(),
+            segmentMeasurementCache: CacheDiagnosticsSnapshot()
+        )
+    }
 }
 
 public final class DefaultPreparedTextEngine: PreparedTextEngine {
@@ -25,7 +42,11 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     private let preparedTextCache = CostBoundCache<PreparedTextCacheKey, PreparedText>(
         countLimit: 256,
         totalCostLimit: 8 * 1_024 * 1_024,
-        cost: { prepared in max(prepared.storage.source.length, 1) }
+        cost: { prepared in
+            max(prepared.storage.source.length, 1) * 4
+                + prepared.storage.core.segments.count * 48
+                + prepared.storage.layoutIdentity.signature.attachmentCount * 384
+        }
     )
     private let layoutPacketCache = CostBoundCache<LayoutPacketKey, PreparedLayoutPacket>(
         countLimit: 512,
@@ -34,9 +55,16 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             let textBytes = packet.lines.reduce(into: 0) { partialResult, line in
                 partialResult += max(line.attributedText.length, 1) * 4
             }
-            return max(textBytes + packet.lines.count * 64, 1)
+            let lineCost = packet.result.fragments.reduce(0) { partialResult, fragment in
+                partialResult + Int((fragment.paintWidth + fragment.blockAdvance).rounded(.up))
+            }
+            return max(textBytes + packet.lines.count * 96 + lineCost, 1)
         }
     )
+    private var invalidationStats = PreparedTextInvalidationStats()
+    private var layoutPacketReuseCount = 0
+    private var observedLayoutLineCount = 0
+    private var observedLayoutCount = 0
 
     public init(measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer()) {
         self.measurer = measurer
@@ -55,25 +83,43 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     }
 
     public func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult {
-        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight).result
+        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+    }
+
+    public func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult {
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env).result
     }
 
     public func layoutPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedLayoutPacket {
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+    }
+
+    public func layoutPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv
+    ) -> PreparedLayoutPacket {
         let resolvedLineHeight = lineHeight > 0 ? lineHeight : prepared.defaultLineHeight
         guard maxWidth >= 0 else {
             return PreparedLayoutPacket(result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0), lines: [])
         }
 
+        let resolvedWidth = env.resolvedMeasurementWidth(maxWidth)
         let key = LayoutPacketKey(
-            preparedIdentity: ObjectIdentifier(prepared.storage),
-            widthInPixels: normalizedPixelValue(maxWidth),
-            lineHeightInPixels: normalizedPixelValue(resolvedLineHeight),
+            identity: prepared.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(maxWidth),
+            lineHeightKey: env.cacheScalarKey(resolvedLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
             layoutDirectionPlaceholder: nil,
             maxLines: nil,
             truncationModeIdentifier: nil
         )
 
         if let cached = layoutPacketCache.value(forKey: key) {
+            layoutPacketReuseCount += 1
+            recordObservedLayout(cached.result.lineCount)
             return cached
         }
 
@@ -81,10 +127,10 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         drawLines.reserveCapacity(8)
 
         var cursor = LayoutCursor()
-        while let line = rawNextLine(prepared, cursor: cursor, maxWidth: maxWidth) {
+        while let line = rawNextLine(prepared, cursor: cursor, maxWidth: resolvedWidth) {
             let attributed = attributedLine(prepared, line: line)
             let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
-        let fragment = buildFragment(
+            let fragment = buildFragment(
                 for: prepared,
                 line: line,
                 attributedLine: attributed,
@@ -102,6 +148,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         )
         let packet = PreparedLayoutPacket(result: result, lines: drawLines)
         layoutPacketCache.insert(packet, forKey: key)
+        recordObservedLayout(result.lineCount)
         return packet
     }
 
@@ -215,15 +262,65 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     }
 
     public func invalidateCaches() {
+        invalidateCaches(reason: .manual)
+    }
+
+    public func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot {
+        PreparedTextDiagnosticsSnapshot(
+            measurementCache: measurer.stats,
+            preparedTextCache: preparedTextCache.snapshot,
+            layoutPacketCache: layoutPacketCache.snapshot,
+            segmentMeasurementCache: segmentMeasurementCache.snapshot,
+            layoutPacketReuseCount: layoutPacketReuseCount,
+            averageLinesPerLayout: observedLayoutCount > 0
+                ? Double(observedLayoutLineCount) / Double(observedLayoutCount)
+                : 0,
+            invalidations: invalidationStats
+        )
+    }
+
+    func invalidateCaches(reason: PreparedInvalidationReason) {
         preparedTextCache.removeAll()
         layoutPacketCache.removeAll()
         measurer.invalidateAll()
         segmentMeasurementCache.invalidateAll()
+        invalidationStats.fullInvalidationCount += 1
+        invalidationStats.lastReason = reason
     }
 
-    func trimForBackground() {
-        layoutPacketCache.removeAll()
+    func invalidateCaches(sourceIDs: Set<PreparedTextSourceID>, reason: PreparedInvalidationReason) {
+        guard !sourceIDs.isEmpty else {
+            return
+        }
+
+        preparedTextCache.removeAll { key, _ in
+            guard let sourceID = key.identity.sourceID else {
+                return false
+            }
+            return sourceIDs.contains(sourceID)
+        }
+        layoutPacketCache.removeAll { key, _ in
+            guard let sourceID = key.identity.sourceID else {
+                return false
+            }
+            return sourceIDs.contains(sourceID)
+        }
+        segmentMeasurementCache.invalidate(sourceIDs: sourceIDs)
+        measurer.invalidate(sourceIDs: sourceIDs)
+        invalidationStats.targetedInvalidationCount += 1
+        invalidationStats.lastReason = reason
+    }
+
+    func trimForBackground(reason: PreparedInvalidationReason = .backgroundTrim) {
+        let layoutSnapshot = layoutPacketCache.snapshot
+        layoutPacketCache.trim(
+            countLimit: layoutSnapshot.countLimit.map { max($0 / 2, 1) },
+            totalCostLimit: layoutSnapshot.totalCostLimit.map { max($0 / 2, 1) }
+        )
         measurer.trimForBackground()
+        segmentMeasurementCache.trimForBackground()
+        invalidationStats.backgroundTrimCount += 1
+        invalidationStats.lastReason = reason
     }
 
     private func prepare(
@@ -231,20 +328,15 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         sourceID: PreparedTextSourceID?,
         options: PreparedTextOptions
     ) -> PreparedText {
+        let signature = attributedText.pretextLayoutSignature()
         let key = PreparedTextCacheKey(
-            identity: sourceID.map(CacheIdentity.sourceID) ?? .attributed(
-                payloadHash: attributedText.pretextPayloadHash(),
-                runSignatureHash: attributedText.pretextRunSignatureHash()
-            ),
-            optionsHash: {
-                var hasher = Hasher()
-                hasher.combine(options)
-                return hasher.finalize()
-            }()
+            identity: sourceID.map { CacheIdentity.sourceID($0, signature) } ?? .attributed(signature),
+            whiteSpaceMode: options.whiteSpaceMode,
+            localeIdentifier: options.localeIdentifier
         )
 
         if let cached = preparedTextCache.value(forKey: key),
-           cached.storage.source === attributedText || cached.storage.source.isEqual(to: attributedText) {
+           cached.storage.layoutIdentity.signature == signature {
             return cached
         }
 
@@ -268,6 +360,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
                 core: core,
                 options: options,
                 sourceID: sourceID,
+                layoutIdentity: key.identity,
                 nativeLineBreakingSource: nativeSource,
                 nativeTypesetter: nativeSource.map { CTTypesetterCreateWithAttributedString($0 as CFAttributedString) }
             )
@@ -641,8 +734,9 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         }
     }
 
-    private func normalizedPixelValue(_ value: CGFloat) -> Int {
-        Int((max(value, 0) * 100).rounded(.up))
+    private func recordObservedLayout(_ lineCount: Int) {
+        observedLayoutCount += 1
+        observedLayoutLineCount += lineCount
     }
 }
 
@@ -680,5 +774,26 @@ final class SegmentMeasurementCache {
 
     func invalidateAll() {
         cache.removeAll()
+    }
+
+    func invalidate(sourceIDs: Set<PreparedTextSourceID>) {
+        cache.removeAll { key, _ in
+            guard let sourceID = key.identity.sourceID else {
+                return false
+            }
+            return sourceIDs.contains(sourceID)
+        }
+    }
+
+    func trimForBackground() {
+        let snapshot = cache.snapshot
+        cache.trim(
+            countLimit: snapshot.countLimit.map { max($0 / 2, 1) },
+            totalCostLimit: snapshot.totalCostLimit.map { max($0 / 2, 1) }
+        )
+    }
+
+    var snapshot: CacheDiagnosticsSnapshot {
+        cache.snapshot
     }
 }

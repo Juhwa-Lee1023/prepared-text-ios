@@ -10,9 +10,14 @@ public enum PreparedTextSurfaceMode: String, Hashable, Sendable {
 @MainActor
 public final class MeasurementCachingLabelAdapter {
     public var textSystem: PreparedTextSystem
+    public var measurementOptions: PreparedTextMeasurementOptions
 
-    public init(textSystem: PreparedTextSystem = .shared) {
+    public init(
+        textSystem: PreparedTextSystem = .shared,
+        measurementOptions: PreparedTextMeasurementOptions = .default
+    ) {
         self.textSystem = textSystem
+        self.measurementOptions = measurementOptions
     }
 
     public func measure(
@@ -25,7 +30,8 @@ public final class MeasurementCachingLabelAdapter {
         let resolvedDisplayScale = displayScale ?? traitCollection.displayScale
         let env = MeasurementEnv(
             scale: Double(resolvedDisplayScale > 0 ? resolvedDisplayScale : UIScreen.main.scale),
-            contentSizeCategory: traitCollection.preferredContentSizeCategory.rawValue
+            contentSizeCategory: traitCollection.preferredContentSizeCategory.rawValue,
+            measurementOptions: measurementOptions
         )
 
         if let sourceID {
@@ -39,6 +45,11 @@ public final class MeasurementCachingLabelAdapter {
 public final class MeasurementCachingLabel: UILabel {
     public let measurementAdapter: MeasurementCachingLabelAdapter
     public var sourceID: PreparedTextSourceID?
+
+    public var measurementOptions: PreparedTextMeasurementOptions {
+        get { measurementAdapter.measurementOptions }
+        set { measurementAdapter.measurementOptions = newValue }
+    }
 
     public override init(frame: CGRect) {
         self.measurementAdapter = MeasurementCachingLabelAdapter()

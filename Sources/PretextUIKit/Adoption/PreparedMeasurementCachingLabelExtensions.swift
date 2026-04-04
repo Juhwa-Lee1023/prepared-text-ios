@@ -4,8 +4,12 @@ import UIKit
 
 extension MeasurementCachingLabel {
     @discardableResult
-    public func prepared(sourceID: PreparedTextSourceID? = nil) -> Self {
+    public func prepared(
+        sourceID: PreparedTextSourceID? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default
+    ) -> Self {
         self.sourceID = sourceID
+        self.measurementOptions = measurementOptions
         return self
     }
 }

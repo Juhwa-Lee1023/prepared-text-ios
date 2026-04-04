@@ -7,16 +7,33 @@ import UIKit
 
 @MainActor
 public final class PreparedTextSystem: NSObject {
+    private struct ObserverToken: @unchecked Sendable {
+        let rawValue: NSObjectProtocol
+        let notificationCenter: NotificationCenter
+    }
+
     public static let shared = PreparedTextSystem()
 
     public let measurer: CachedFramesetterTextMeasurer
     public let engine: DefaultPreparedTextEngine
 
-    public init(measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer()) {
+    private let invalidationCenter: PreparedInvalidationCenter
+    private var observerTokens: [ObserverToken] = []
+
+    public init(
+        measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer(),
+        invalidationCenter: PreparedInvalidationCenter = .shared
+    ) {
         self.measurer = measurer
         self.engine = DefaultPreparedTextEngine(measurer: measurer)
+        self.invalidationCenter = invalidationCenter
         super.init()
         registerLifecycleObservers()
+        registerInvalidationObservers()
+    }
+
+    deinit {
+        observerTokens.forEach { $0.notificationCenter.removeObserver($0.rawValue) }
     }
 
     public func measure(
@@ -47,7 +64,16 @@ public final class PreparedTextSystem: NSObject {
         maxWidth: CGFloat,
         lineHeight: CGFloat
     ) -> LayoutResult {
-        engine.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+        engine.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+    }
+
+    public func layout(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv
+    ) -> LayoutResult {
+        engine.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
     }
 
     public func layoutPacket(
@@ -55,7 +81,16 @@ public final class PreparedTextSystem: NSObject {
         maxWidth: CGFloat,
         lineHeight: CGFloat
     ) -> PreparedLayoutPacket {
-        engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+        engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+    }
+
+    public func layoutPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv
+    ) -> PreparedLayoutPacket {
+        engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
     }
 
     public func attributedText(
@@ -67,31 +102,106 @@ public final class PreparedTextSystem: NSObject {
         engine.attributedText(prepared, from: start, to: end, flatteningHardBreaks: flatteningHardBreaks)
     }
 
+    public func invalidateAll(reason: PreparedInvalidationReason = .manual) {
+        engine.invalidateCaches(reason: reason)
+    }
+
+    public func invalidate(sourceIDs: Set<PreparedTextSourceID>, reason: PreparedInvalidationReason = .manual) {
+        engine.invalidateCaches(sourceIDs: sourceIDs, reason: reason)
+    }
+
+    public func trimForBackground(reason: PreparedInvalidationReason = .backgroundTrim) {
+        engine.trimForBackground(reason: reason)
+    }
+
+    public func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot {
+        engine.diagnosticsSnapshot()
+    }
+
+    private func registerInvalidationObservers() {
+        let center = invalidationCenter.observerNotificationCenter
+        let token = center.addObserver(
+            forName: PreparedInvalidationCenter.notificationName,
+            object: invalidationCenter,
+            queue: nil
+        ) { [weak self] notification in
+            guard
+                let self,
+                let request = notification.userInfo?[PreparedInvalidationCenter.requestUserInfoKey] as? PreparedInvalidationRequest
+            else {
+                return
+            }
+
+            Task { @MainActor in
+                self.applyInvalidation(request)
+            }
+        }
+        observerTokens.append(ObserverToken(rawValue: token, notificationCenter: center))
+    }
+
     private func registerLifecycleObservers() {
         #if canImport(UIKit)
         let center = NotificationCenter.default
-        center.addObserver(
-            self,
-            selector: #selector(handleMemoryWarningNotification),
-            name: UIApplication.didReceiveMemoryWarningNotification,
-            object: nil
+
+        observerTokens.append(
+            ObserverToken(rawValue: center.addObserver(
+                forName: UIApplication.didReceiveMemoryWarningNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyInvalidation(.init(scope: .all, reason: .memoryWarning))
+                }
+            }, notificationCenter: center)
         )
-        center.addObserver(
-            self,
-            selector: #selector(handleDidEnterBackgroundNotification),
-            name: UIApplication.didEnterBackgroundNotification,
-            object: nil
+
+        observerTokens.append(
+            ObserverToken(rawValue: center.addObserver(
+                forName: UIApplication.didEnterBackgroundNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyInvalidation(.init(scope: .backgroundTrim, reason: .backgroundTrim))
+                }
+            }, notificationCenter: center)
+        )
+
+        observerTokens.append(
+            ObserverToken(rawValue: center.addObserver(
+                forName: UIContentSizeCategory.didChangeNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyInvalidation(.init(scope: .all, reason: .contentSizeCategoryChanged))
+                }
+            }, notificationCenter: center)
         )
         #endif
+
+        let localeCenter = NotificationCenter.default
+        observerTokens.append(
+            ObserverToken(rawValue: localeCenter.addObserver(
+                forName: NSLocale.currentLocaleDidChangeNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    self?.applyInvalidation(.init(scope: .all, reason: .localeChanged))
+                }
+            }, notificationCenter: localeCenter)
+        )
     }
 
-    #if canImport(UIKit)
-    @objc private func handleMemoryWarningNotification() {
-        engine.invalidateCaches()
+    private func applyInvalidation(_ request: PreparedInvalidationRequest) {
+        switch request.scope {
+        case .all:
+            engine.invalidateCaches(reason: request.reason)
+        case let .sourceIDs(sourceIDs):
+            engine.invalidateCaches(sourceIDs: sourceIDs, reason: request.reason)
+        case .backgroundTrim:
+            engine.trimForBackground(reason: request.reason)
+        }
     }
-
-    @objc private func handleDidEnterBackgroundNotification() {
-        engine.trimForBackground()
-    }
-    #endif
 }

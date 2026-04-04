@@ -36,5 +36,8 @@ This repository is positioned as a **stable** library release for its documented
 ## Cache And Runtime Limits
 
 - Stage 0 and Stage 1 caches are bounded and trimmed for UIKit memory pressure, but they are tuned for read-mostly UI, not document editors.
+- Width bucketization is optional and intentionally conservative. It can slightly over-measure height in exchange for more cache reuse on repeated-width self-sizing flows.
+- Pixel-aligned measurement reduces repeated-measurement jitter for fractional width proposals, but it is not a promise of perfect cross-script visual parity.
 - Performance claims are scoped to repeated-width read-only sizing workloads. Always benchmark inside the adopting app.
+- Attachment-aware cache identity is improved in this phase, but the package still does not ship a full async attachment resolver, placeholder pipeline, or general attachment framework.
 - The demo app and showcase surfaces are verification tools for release readiness; they are not a second product surface.

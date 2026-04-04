@@ -139,6 +139,45 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PretextValidation`
 - `PretextBenchmarks`
 
+## Phase 1 엔진 개선
+
+Phase 1의 핵심은 이 라이브러리를 “얇은 텍스트 유틸리티”보다 “재사용 가능한 읽기 전용 레이아웃 엔진”에 가깝게 만드는 것입니다.
+
+- cache identity 는 plain string 기준이 아니라 attributed range 변화까지 반영하는 deterministic layout key 로 정리됩니다
+- inline attachment 가 측정에 영향을 주는 경우 attachment metric 도 layout identity 에 포함됩니다
+- width normalization 은 `PreparedTextMeasurementOptions` 로 명시적으로 선택합니다
+- pixel-aligned measurement 는 숨겨진 heuristic 이 아니라 public opt-in mode 입니다
+- invalidation / background trim 은 `PreparedInvalidationCenter` 와 `PreparedTextSystem` 으로 명시적으로 제어합니다
+- diagnostics 는 `PreparedTextSystem.diagnosticsSnapshot()` 으로 확인할 수 있습니다
+
+예시:
+
+```swift
+let measurementOptions = PreparedTextMeasurementOptions(
+    widthNormalizationPolicy: .bucketed(points: 4),
+    pixelMeasurementPolicy: .alignedToScale
+)
+
+let label = MeasurementCachingLabel().prepared(
+    sourceID: .init("feed/body"),
+    measurementOptions: measurementOptions
+)
+
+let preparedView = PreparedLabelView().prepared(
+    attributedText: NSAttributedString(string: "Prepared body copy"),
+    sourceID: .init("feed/body"),
+    measurementOptions: measurementOptions,
+    maxLayoutWidth: 320
+)
+
+let diagnostics = PreparedTextSystem.shared.diagnosticsSnapshot()
+PreparedInvalidationCenter.shared.trimForBackground()
+```
+
+width precision 이 실제 의미를 가지는 surface 라면 exact mode 를 사용하세요.
+self-sizing loop 에서 비슷한 width proposal 이 반복되는 surface 라면 bucketed mode 가 맞습니다.
+fractional width churn 때문에 measurement jitter 가 보인다면 pixel-aligned mode 를 같이 검토하세요.
+
 ## 개발
 
 자주 쓰는 로컬 명령:
@@ -172,6 +211,7 @@ maintainer / 릴리즈 문서:
 - [Repository setup](docs/REPOSITORY_SETUP.md)
 - [Validation](docs/Validation.md)
 - [Benchmarks](docs/Benchmarks.md)
+- [Migration guide](docs/MigrationGuide.md)
 - [Known gaps](docs/KnownGaps.md)
 
 ## 데모 앱

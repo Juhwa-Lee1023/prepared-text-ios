@@ -222,6 +222,7 @@ final class PreparedTextStorage {
     let core: PreparedTextCore
     let options: PreparedTextOptions
     let sourceID: PreparedTextSourceID?
+    let layoutIdentity: CacheIdentity
     let nativeLineBreakingSource: NSAttributedString?
     let nativeTypesetter: CTTypesetter?
 
@@ -230,6 +231,7 @@ final class PreparedTextStorage {
         core: PreparedTextCore,
         options: PreparedTextOptions,
         sourceID: PreparedTextSourceID?,
+        layoutIdentity: CacheIdentity,
         nativeLineBreakingSource: NSAttributedString?,
         nativeTypesetter: CTTypesetter?
     ) {
@@ -237,6 +239,7 @@ final class PreparedTextStorage {
         self.core = core
         self.options = options
         self.sourceID = sourceID
+        self.layoutIdentity = layoutIdentity
         self.nativeLineBreakingSource = nativeLineBreakingSource
         self.nativeTypesetter = nativeTypesetter
     }
