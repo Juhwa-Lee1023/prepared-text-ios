@@ -35,6 +35,13 @@ Validate locally before opening a PR:
 ./scripts/check-pr.sh --title "fix(core): summary" --body-file /path/to/body.md
 ```
 
+PR bodies must use the whylog-style template in `.github/pull_request_template.md`:
+
+- keep `Lore-id` lowercase hexadecimal
+- require concrete `Constraint`, `Rejected`, and `Directive` entries
+- require both `Tested` and `Not-tested`
+- use `Confidence`, `Scope-risk`, and `Reversibility` enum values
+
 ## Labels
 
 Repository labels live in:
@@ -50,9 +57,10 @@ Use them consistently:
 
 ## Merge expectations
 
-- Prefer squash merges for normal feature and fix work.
+- Prefer merge commits when the branch history is already small and coherent.
+- Avoid squash merges when they would discard useful whylog decision context.
 - Keep the merge message aligned with the validated PR title.
-- Do not merge a PR that is missing release intent, tests, or linked issue context.
+- Do not merge a PR that is missing whylog context, tested coverage, or a clear follow-up directive.
 - Require green CI before merge unless an administrator override is truly necessary.
 
 ## Release steps

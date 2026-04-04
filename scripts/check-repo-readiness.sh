@@ -106,6 +106,10 @@ grep -q 'MIT' LICENSE || record_failure "LICENSE must contain MIT terms."
 grep -q '^## \[Unreleased\]' CHANGELOG.md || record_failure "CHANGELOG.md must include an [Unreleased] section."
 grep -q '^## \[0\.1\.0\]' CHANGELOG.md || record_failure "CHANGELOG.md must include an initial 0.1.0 section."
 grep -q 'Semantic Versioning' docs/VERSIONING.md || record_failure "docs/VERSIONING.md must describe Semantic Versioning."
+grep -q '^## Why this change exists$' .github/pull_request_template.md || record_failure ".github/pull_request_template.md must use the whylog PR heading."
+grep -q '^Lore-id:' .github/pull_request_template.md || record_failure ".github/pull_request_template.md must include Lore-id."
+grep -q 'whylog-style PR body template' CONTRIBUTING.md || record_failure "CONTRIBUTING.md must explain the whylog-style PR body template."
+grep -q 'Prefer merge commits when the branch history is already small and coherent.' docs/MAINTAINERS.md || record_failure "docs/MAINTAINERS.md must describe the merge-commit preference."
 
 python3 -m json.tool .github/labels.json >/dev/null || record_failure ".github/labels.json must be valid JSON."
 
