@@ -88,9 +88,10 @@ struct PretextBenchmarkCLI {
         let fixtures = makeFixtures()
         let listItems = makeListItems(count: listItemCount)
         let policies = makePolicies()
-        let stage1LayoutOptions = PreparedTextLayoutOptions(
+        let lineLimitedLayoutOptions = PreparedTextLayoutOptions(
             maximumNumberOfLines: 2,
             lineBreakMode: .truncateTail,
+            lineBreakStrategy: .automatic,
             alignment: .natural,
             layoutDirection: .leftToRight
         )
@@ -155,7 +156,7 @@ struct PretextBenchmarkCLI {
         }
 
         lines.append("")
-        lines.append("## Stage 1 Display Layout Reuse")
+        lines.append("## Core Finite-Line Layout Reuse")
         lines.append("")
         lines.append("| Fixture | Policy | Sweep Median | Sweep p95 | Layout Cache Hit Rate | Reuse Count | Cache Cost | Avg Lines |")
         lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
@@ -175,13 +176,12 @@ struct PretextBenchmarkCLI {
                     repetitionsPerSample: 1
                 ) {
                     for width in widths {
-                        let packet = engine.displayLayoutPacket(
+                        let packet = engine.layoutPacket(
                             prepared,
                             maxWidth: width,
                             lineHeight: fixture.lineHeight,
-                            containerWidth: width,
                             env: policy.env,
-                            options: stage1LayoutOptions
+                            options: lineLimitedLayoutOptions
                         )
                         consume(packet.result.lineCount)
                         consume(packet.result.height)
@@ -193,13 +193,64 @@ struct PretextBenchmarkCLI {
                     repetitionsPerSample: sweepRepetitions
                 ) {
                     for width in widths {
-                        let packet = engine.displayLayoutPacket(
+                        let packet = engine.layoutPacket(
                             prepared,
                             maxWidth: width,
                             lineHeight: fixture.lineHeight,
-                            containerWidth: width,
                             env: policy.env,
-                            options: stage1LayoutOptions
+                            options: lineLimitedLayoutOptions
+                        )
+                        consume(packet.result.lineCount)
+                        consume(packet.result.height)
+                    }
+                }
+                let diagnostics = engine.diagnosticsSnapshot()
+                lines.append(
+                    "| \(fixture.name) | \(policy.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | \(diagnostics.layoutPacketReuseCount) | \(diagnostics.layoutPacketCache.currentCost) | \(format(diagnostics.averageLinesPerLayout)) |"
+                )
+            }
+        }
+
+        lines.append("")
+        lines.append("## URL Strategy Sweep")
+        lines.append("")
+        lines.append("| Strategy | Sweep Median | Sweep p95 | Layout Cache Hit Rate | Avg Lines | Notes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+
+        if let urlFixture = fixtures.first(where: { $0.name == "long-token" }) {
+            let strategies: [(name: String, value: PreparedTextLineBreakStrategy)] = [
+                ("automatic", .automatic),
+                ("url-friendly", .urlFriendly),
+                ("native-typesetter", .nativeTypesetterPreferred),
+            ]
+            let exactEnv = policies.first(where: { $0.name == "exact" })?.env ?? .default
+
+            for strategy in strategies {
+                let engine = DefaultPreparedTextEngine()
+                let prepared = engine.prepare(
+                    urlFixture.text,
+                    sourceID: PreparedTextSourceID("bench-strategy-\(strategy.name)"),
+                    options: urlFixture.options
+                )
+                let widths = jitteredWidths(from: urlFixture.sweepWidths)
+                let sweep = sweepMeasurements(
+                    sampleCount: iterations,
+                    widths: widths,
+                    repetitionsPerSample: sweepRepetitions
+                ) {
+                    for width in widths {
+                        let packet = engine.layoutPacket(
+                            prepared,
+                            maxWidth: width,
+                            lineHeight: urlFixture.lineHeight,
+                            env: exactEnv,
+                            options: PreparedTextLayoutOptions(
+                                maximumNumberOfLines: 2,
+                                lineBreakMode: .wordWrap,
+                                lineBreakStrategy: strategy.value,
+                                alignment: .natural,
+                                layoutDirection: .leftToRight
+                            )
                         )
                         consume(packet.result.lineCount)
                         consume(packet.result.height)
@@ -208,7 +259,7 @@ struct PretextBenchmarkCLI {
                 }
                 let diagnostics = engine.diagnosticsSnapshot()
                 lines.append(
-                    "| \(fixture.name) | \(policy.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | \(diagnostics.layoutPacketReuseCount) | \(diagnostics.layoutPacketCache.currentCost) | \(format(diagnostics.averageLinesPerLayout)) |"
+                    "| \(strategy.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | \(format(diagnostics.averageLinesPerLayout)) | url-heavy 2-line summary path |"
                 )
             }
         }
@@ -229,7 +280,7 @@ struct PretextBenchmarkCLI {
                     engine: engine,
                     items: listItems,
                     env: policy.env,
-                    layoutOptions: stage1LayoutOptions
+                    layoutOptions: lineLimitedLayoutOptions
                 )
                 consume(summary.totalLines)
                 consume(summary.totalHeight)
@@ -366,11 +417,10 @@ private func measureListSizing(
 
     for item in items {
         let prepared = engine.prepare(item.text, sourceID: PreparedTextSourceID(item.name), options: item.options)
-        let packet = engine.displayLayoutPacket(
+        let packet = engine.layoutPacket(
             prepared,
             maxWidth: item.primaryWidth,
             lineHeight: item.lineHeight,
-            containerWidth: item.primaryWidth,
             env: env,
             options: layoutOptions
         )

@@ -71,4 +71,5 @@ struct LayoutPacketKey: Hashable, Sendable {
     var lineHeightKey: Int
     var context: MeasurementCacheContext
     var preparedTextOptions: PreparedTextOptionsCacheContext
+    var layoutOptions: PreparedTextLayoutOptions
 }

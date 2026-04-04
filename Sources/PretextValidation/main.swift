@@ -292,6 +292,97 @@ struct ValidationSuite {
             try expect(abs(result.height - CGFloat(result.lineCount) * 18) < 0.01, "expected height to sum fragment block advances")
         }
 
+        execute("finite-line-tail-truncation-is-core-owned") {
+            let prepared = engine.prepare(
+                fixtureText("Feed summaries should stop at the requested line count inside the core layout engine."),
+                sourceID: PreparedTextSourceID("validation-line-limit"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 92,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 2,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            try expect(packet.lines.count == 2, "expected exactly two visible lines")
+            try expect(packet.result.isTruncated, "expected finite-line layout to report truncation")
+            try expect(packet.result.stoppedEarlyAtMaximumNumberOfLines, "expected finite-line layout to stop early")
+            try expect(packet.lines.last?.isTruncated == true, "expected final visible line to carry truncation state")
+        }
+
+        execute("word-wrap-line-limit-still-reports-hidden-overflow") {
+            let prepared = engine.prepare(
+                fixtureText("Word wrapping with a finite line limit should clip overflow without inventing an ellipsis token."),
+                sourceID: PreparedTextSourceID("validation-word-wrap-limit"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 100,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .wordWrap,
+                    lineBreakStrategy: .automatic,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            try expect(packet.result.isTruncated, "expected finite word-wrap layout to report clipped overflow")
+            try expect(packet.lines.first?.isTruncated == true, "expected final visible line to report truncation even without an ellipsis")
+            try expect(packet.lines.first?.attributedText.string.contains("…") == false, "word-wrap clipping should not inject ellipsis")
+        }
+
+        execute("layout-direction-affects-core-alignment-resolution") {
+            let prepared = engine.prepare(
+                fixtureText("Natural alignment should resolve inside the core packet path."),
+                sourceID: PreparedTextSourceID("validation-layout-direction"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let leftToRight = engine.layoutPacket(
+                prepared,
+                maxWidth: 140,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .leading,
+                    layoutDirection: .leftToRight
+                )
+            )
+            let rightToLeft = engine.layoutPacket(
+                prepared,
+                maxWidth: 140,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .leading,
+                    layoutDirection: .rightToLeft
+                )
+            )
+
+            try expect(leftToRight.lines.first?.resolvedAlignment == .left, "expected LTR leading alignment to resolve left")
+            try expect(rightToLeft.lines.first?.resolvedAlignment == .right, "expected RTL leading alignment to resolve right")
+        }
+
         execute("layout-packet-cache-reuse") {
             let prepared = engine.prepare(
                 fixtureText("Prepared text handles should reuse cached layout packets for identical widths."),

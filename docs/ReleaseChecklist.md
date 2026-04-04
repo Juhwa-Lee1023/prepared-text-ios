@@ -28,10 +28,12 @@ swift run PretextBenchmarks
 - `swift run PretextValidation --mode gate`
   - semantic checks must pass
   - the stable host gate corpus must keep exact line counts, no divergent strict lines, and `heightDelta <= 1pt`
+  - core-owned finite-line / truncation / layout-direction semantic checks must stay green
 - `swift run PretextBenchmarks`
   - `.build/reports/benchmark-results.md` must regenerate and be non-empty
   - release review should use the default benchmark sample counts, not a reduced local smoke profile
   - review exact vs `bucketed-4pt` vs `pixel-aligned` policy rows rather than only single cold timings
+  - review finite-line and URL strategy rows because Phase 2 moved that policy into the core engine
 - `./scripts/run-ios-demo-tests.sh`
   - the committed iOS demo project at `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` must build and test on simulator
   - strict `UILabel` / `UITextView` baseline XCTest must pass for the supported simulator baseline subset

@@ -106,14 +106,31 @@ public struct LayoutResult: Hashable, Sendable {
     public var fragments: [LineFragment]
     public var height: CGFloat
     public var maxPaintWidth: CGFloat
+    public var isTruncated: Bool
+    public var stoppedEarlyAtMaximumNumberOfLines: Bool
+    public var visibleSourceUTF16Ranges: [NSRange]
 
-    public init(fragments: [LineFragment], height: CGFloat, maxPaintWidth: CGFloat) {
+    public init(
+        fragments: [LineFragment],
+        height: CGFloat,
+        maxPaintWidth: CGFloat,
+        isTruncated: Bool = false,
+        stoppedEarlyAtMaximumNumberOfLines: Bool = false,
+        visibleSourceUTF16Ranges: [NSRange] = []
+    ) {
         self.fragments = fragments
         self.height = height
         self.maxPaintWidth = maxPaintWidth
+        self.isTruncated = isTruncated
+        self.stoppedEarlyAtMaximumNumberOfLines = stoppedEarlyAtMaximumNumberOfLines
+        self.visibleSourceUTF16Ranges = visibleSourceUTF16Ranges
     }
 
     public var lineCount: Int {
+        fragments.count
+    }
+
+    public var visibleLineCount: Int {
         fragments.count
     }
 }
@@ -122,11 +139,27 @@ public struct PreparedDrawLine {
     public var fragment: LineFragment
     public var attributedText: NSAttributedString
     public var ctLine: CTLine
+    public var isTruncated: Bool
+    public var consumedSourceUTF16Range: NSRange
+    public var sourceSpans: [PreparedTextSourceCoordinateSpan]
+    public var resolvedAlignment: PreparedTextHorizontalAlignment
 
-    public init(fragment: LineFragment, attributedText: NSAttributedString, ctLine: CTLine) {
+    public init(
+        fragment: LineFragment,
+        attributedText: NSAttributedString,
+        ctLine: CTLine,
+        isTruncated: Bool = false,
+        consumedSourceUTF16Range: NSRange = NSRange(location: 0, length: 0),
+        sourceSpans: [PreparedTextSourceCoordinateSpan] = [],
+        resolvedAlignment: PreparedTextHorizontalAlignment = .left
+    ) {
         self.fragment = fragment
         self.attributedText = attributedText
         self.ctLine = ctLine
+        self.isTruncated = isTruncated
+        self.consumedSourceUTF16Range = consumedSourceUTF16Range
+        self.sourceSpans = sourceSpans
+        self.resolvedAlignment = resolvedAlignment
     }
 }
 
@@ -137,6 +170,21 @@ public struct PreparedLayoutPacket {
     public init(result: LayoutResult, lines: [PreparedDrawLine]) {
         self.result = result
         self.lines = lines
+    }
+
+    public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
+        PreparedTextSourceCoordinateMap(
+            lines: lines.enumerated().map { index, line in
+                PreparedTextSourceCoordinateLine(
+                    lineIndex: index,
+                    fragment: line.fragment,
+                    displayUTF16Length: line.attributedText.length,
+                    consumedSourceUTF16Range: line.consumedSourceUTF16Range,
+                    sourceSpans: line.sourceSpans,
+                    isTruncated: line.isTruncated
+                )
+            }
+        )
     }
 }
 

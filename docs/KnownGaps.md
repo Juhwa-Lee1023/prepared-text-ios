@@ -23,8 +23,9 @@ This repository is positioned as a **stable** library release for its documented
 
 ## Surface Limits
 
-- `PreparedLabelView` supports line limits, truncation, alignment, and read-only link activation, but it is still not a full `UILabel` replacement.
-- The promoted `PreparedTextLayoutOptions` surface intentionally covers line limits, truncation, alignment, and layout direction only. It is not a full paragraph layout or annotation framework.
+- Finite-line semantics are now core-owned through `PreparedTextLayoutOptions`, but the package still does not claim full `UILabel` or browser-grade paragraph behavior.
+- `PreparedLabelView` supports line limits, truncation, alignment, line-break strategy selection, and read-only link activation, but it is still not a full `UILabel` replacement.
+- The promoted `PreparedTextLayoutOptions` surface intentionally covers line limits, truncation, alignment, line-break strategy, and layout direction only. It is not a full paragraph layout or annotation framework.
 - Link accessibility is exposed for read-only content, but multiple links inside one label are surfaced as custom accessibility actions rather than distinct accessibility elements.
 - `PreparedTextView` is a UIKit bridge. It does not replace native SwiftUI `Text` internals.
 - `UILabel().prepared()` and global legacy UILabel support are Stage 0 sizing helpers only. They do not swap UILabel drawing for the Stage 1 renderer.
@@ -43,3 +44,4 @@ This repository is positioned as a **stable** library release for its documented
 - `PreparedTextSourceCoordinateMap` exposes displayed source spans, but it is not a token API, annotation system, or full editor coordinate model.
 - Signpost instrumentation exists for hot paths, but it is still lightweight profiling support rather than a complete tracing product.
 - The demo app and showcase surfaces are verification tools for release readiness; they are not a second product surface.
+- The public line-break strategy surface is intentionally narrow. It offers stable selection among supported heuristics, not generalized browser-grade typography control.

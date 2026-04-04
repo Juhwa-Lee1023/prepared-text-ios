@@ -57,6 +57,11 @@ public struct PreparedLabelConfiguration {
         set { layoutOptions.lineBreakMode = PreparedTextLineBreakMode(newValue) }
     }
 
+    public var lineBreakStrategy: PreparedTextLineBreakStrategy {
+        get { layoutOptions.lineBreakStrategy }
+        set { layoutOptions.lineBreakStrategy = newValue }
+    }
+
     public var textAlignment: NSTextAlignment? {
         get { layoutOptions.alignment.nsTextAlignment }
         set { layoutOptions.alignment = PreparedTextHorizontalAlignment(newValue) }
@@ -96,6 +101,13 @@ public final class PreparedLabelView: UIView {
         get { configuration.lineBreakMode }
         set {
             updateConfiguration { $0.lineBreakMode = newValue }
+        }
+    }
+
+    public var lineBreakStrategy: PreparedTextLineBreakStrategy {
+        get { configuration.lineBreakStrategy }
+        set {
+            updateConfiguration { $0.lineBreakStrategy = newValue }
         }
     }
 
@@ -298,8 +310,7 @@ public final class PreparedLabelView: UIView {
 
     public func sourceCoordinateMap() -> PreparedTextSourceCoordinateMap? {
         let layoutWidth = resolvedDrawWidth()
-        let containerWidth = bounds.width > 0 ? bounds.width : layoutWidth
-        return resolvedDisplayPacket(layoutWidth: layoutWidth, containerWidth: containerWidth)?.sourceCoordinateMap
+        return resolvedLayoutPacket(width: layoutWidth)?.sourceCoordinateMap
     }
 
     @discardableResult
@@ -389,7 +400,13 @@ public final class PreparedLabelView: UIView {
             return nil
         }
         let lineHeight = configuration.lineHeightOverride ?? prepared.defaultLineHeight
-        return textSystem.layoutPacket(prepared, maxWidth: width, lineHeight: lineHeight, env: measurementEnv())
+        return textSystem.layoutPacket(
+            prepared,
+            maxWidth: width,
+            lineHeight: lineHeight,
+            env: measurementEnv(),
+            options: resolvedLayoutOptions()
+        )
     }
 
     private func resolvedDisplayPacket(layoutWidth: CGFloat, containerWidth: CGFloat) -> PreparedTextDisplayPacket? {

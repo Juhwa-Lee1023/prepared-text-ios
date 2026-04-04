@@ -139,7 +139,7 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 엔진 개선 사항
+## Phase 1 / Phase 2 엔진 개선 사항
 
 이 라이브러리는 이제 단순한 "text view wrapper"보다, 읽기 전용 repeated-width surface를 위한 reusable layout engine에 더 가깝게 동작합니다.
 
@@ -149,6 +149,8 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PreparedInvalidationCenter` 기반 explicit invalidation
 - `PreparedTextDiagnosticsSnapshot` 기반 public diagnostics
 - `PreparedAttachmentRegistry` 기반 attachment-aware placeholder / resolver plumbing
+- `PreparedTextLayoutOptions` 기반 core-owned finite-line display policy
+- `PreparedTextLineBreakStrategy` 기반 public line-break strategy 선택
 
 예시:
 
@@ -172,15 +174,15 @@ let measurementEnv = MeasurementEnv(
 let layoutOptions = PreparedTextLayoutOptions(
     maximumNumberOfLines: 2,
     lineBreakMode: .truncateTail,
+    lineBreakStrategy: .urlFriendly,
     alignment: .natural,
     layoutDirection: .leftToRight
 )
 
-let packet = system.displayLayoutPacket(
+let packet = system.layoutPacket(
     prepared,
     maxWidth: 320,
     lineHeight: prepared.defaultLineHeight,
-    containerWidth: 320,
     env: measurementEnv,
     options: layoutOptions
 )
@@ -191,6 +193,19 @@ let coordinateMap = packet.sourceCoordinateMap
 visual parity가 더 중요하면 exact width를 유지하세요.
 근접한 width proposal이 반복되는 self-sizing loop라면 약간의 over-measure를 감수하고 bucketed width를 쓰는 편이 낫습니다.
 fractional width jitter 때문에 반복 측정이 흔들리면 pixel-aligned measurement를 고려하세요.
+line-limited card, summary, feed row를 UIKit 전용 post-processing이 아니라 엔진 차원의 prepared layout 시나리오로 다루고 싶다면 `PreparedTextLayoutOptions` 를 사용하세요.
+
+Phase 2에서는 core engine이 직접 아래 semantics를 소유합니다.
+
+- `maximumNumberOfLines`
+- truncation mode
+- line-break strategy
+- layout-direction-sensitive alignment resolution
+- visible line count / visible source range
+- truncation state / early-stop semantics
+
+즉, 2-line tail-truncated feed card는 이제 UIKit 레이어에서 잘라내는 동작이 아니라, core engine 안에서 별도 key와 reuse story를 갖는 layout 시나리오가 됩니다.
+`PreparedLabelView` 와 `PreparedTextView` 는 이 core 결과를 소비해 렌더링하는 얇은 surface로 남습니다.
 
 attachment 지원은 이제 identity-aware / placeholder-aware 수준까지 올라왔지만, 여전히 full async attachment rendering framework는 아닙니다.
 
@@ -200,7 +215,7 @@ Phase 1 엔진 위에는 다음과 같은 narrow follow-up surface도 추가로 
 - displayed source span inspection 을 위한 `PreparedTextSourceCoordinateMap`
 - circle obstacle exclusion layout 을 위한 `PreparedTextObstacleLayouter`
 
-이 surface 들도 의도적으로 narrow 하며, 프로젝트를 broad text toolkit 으로 넓히려는 목적은 아닙니다. 이번 Phase 1의 핵심 가치는 어디까지나 위의 deterministic cache / invalidation / diagnostics 강화입니다.
+이 surface 들도 의도적으로 narrow 하며, 프로젝트를 broad text toolkit 으로 넓히려는 목적은 아닙니다. 핵심 가치는 여전히 deterministic reuse, bounded cache, explicit invalidation, 그리고 core-owned read-only display policy에 있습니다.
 
 ## 개발
 

@@ -35,7 +35,7 @@
 5. 기본 whitespace contract 는 `.uikitLiteral` 로 둔다. CSS-like collapse 가 필요할 때만 `.cssNormal`, preserved whitespace 가 필요할 때만 `.preWrap` 를 opt-in 한다.
 6. width churn 이 심한 self-sizing loop 면 `PreparedTextMeasurementOptions(widthNormalizationPolicy: .bucketed(points: 4))` 같은 bucketed policy 를 먼저 검토한다. visual parity 가 더 중요하면 `.exactPixels` 를 유지한다.
 7. fractional proposal jitter 가 반복 측정 흔들림을 만들면 `PreparedTextMeasurementOptions(pixelMeasurementPolicy: .alignedToScale)` 를 사용한다.
-8. Stage 1 surface 에는 `PreparedTextLayoutOptions` 를 같이 도입해 line limit, truncation, alignment, layout direction 을 view-local hack 이 아니라 explicit policy 로 다룬다.
+8. Stage 1 surface 에는 `PreparedTextLayoutOptions` 를 같이 도입해 line limit, truncation, alignment, line-break strategy, layout direction 을 view-local hack 이 아니라 core-owned explicit policy 로 다룬다.
 9. stable SwiftUI sugar 는 `"Hello".prepared()`, `AttributedString("Hello").prepared()`, `NSAttributedString(...).prepared()` 처럼 명시적 payload 에만 쓴다.
 10. zero-arg `Text.prepared()` 는 지원하지 않는다. native SwiftUI `Text` 는 public API 만으로 prepared-text pipeline 으로 정직하게 변환할 수 없기 때문이다.
 11. ergonomic call-site syntax 가 꼭 필요하면 experimental `Text.prepared(source:)` 만 제한적으로 쓴다. 이때도 prepared renderer 는 `source` payload 를 authoritative input 으로 사용하고, 원래 `Text` modifier 는 자동으로 보존되지 않는다.

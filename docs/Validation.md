@@ -1,13 +1,14 @@
 # Validation
 
 prepared-text-ios ships two validation paths and one Apple-platform verification path.
-The current Phase 1 host coverage locks down:
+The current host coverage locks down the stable Phase 1 and Phase 2 release story:
 
 - deterministic attributed-range cache identity
 - width bucketization and pixel alignment behavior
 - attachment-aware invalidation / placeholder reuse paths
-
-Additional narrow-surface follow-up coverage also exists in host and simulator tests, but it is not the primary Phase 1 claim.
+- core-owned finite-line layout, truncation, and visible-range semantics
+- layout-direction-sensitive alignment resolution
+- public line-break strategy selection on supported narrow surfaces
 
 ## Host report
 
@@ -26,6 +27,12 @@ Or from the repo helper:
 This writes `.build/reports/validation-report.md`.
 
 Report mode is intentionally descriptive. It prints the current host-side comparison report and semantic check results, but it does not fail on baseline diffs by itself.
+
+The semantic check section now includes direct engine-level finite-line assertions such as:
+
+- `finite-line-tail-truncation-is-core-owned`
+- `word-wrap-line-limit-still-reports-hidden-overflow`
+- `layout-direction-affects-core-alignment-resolution`
 
 ## Host gate
 
@@ -115,3 +122,4 @@ For performance verification, pair the validation gate with:
 ```
 
 The benchmark report now compares exact widths, 4pt bucketed widths, and pixel-aligned measurement across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text fixtures.
+It also includes line-limited and URL-heavy scenarios so Phase 2 finite-line behavior is exercised outside ad hoc UI tests.
