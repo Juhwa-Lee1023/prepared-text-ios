@@ -1,0 +1,13 @@
+#!/bin/sh
+# whylog-managed
+if [ -x "./node_modules/.bin/whylog" ]; then
+  exec ./node_modules/.bin/whylog __hook commit-msg "$@"
+fi
+if command -v whylog >/dev/null 2>&1; then
+  exec whylog __hook commit-msg "$@"
+fi
+if command -v npx >/dev/null 2>&1; then
+  exec npx --yes --package whylog@0.4.0 whylog __hook commit-msg "$@"
+fi
+echo "whylog is not installed or not on PATH" >&2
+exit 1

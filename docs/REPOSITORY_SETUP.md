@@ -37,6 +37,21 @@ Then sync labels and repository settings:
 ./scripts/bootstrap-github.sh --owner Juhwa-Lee1023
 ```
 
+To scaffold whylog without introducing Node package manifests:
+
+```bash
+npx --yes --package whylog@0.4.0 whylog init --no-package --profile ai
+npx --yes --package whylog@0.4.0 whylog doctor
+```
+
+This repository intentionally keeps whylog as scaffold-only:
+
+- commit `.whylog/`, AI instruction files, and `.github/workflows/validate-whylog.yml`
+- do not add `package.json` or lockfiles for whylog
+- keep the generated `validate-whylog` workflow independent at first
+- use `npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict` during staged adoption
+- keep the on-demand fallback pinned to `0.4.0` while the repository adopts the released npm package
+
 The bootstrap script can:
 
 - create the repository if it does not exist
@@ -57,7 +72,7 @@ After bootstrap, verify:
 - repository visibility is still `private`
 - Discussions are enabled only if you want support routed there
 - branch protection is active on `main`
-- required checks match the current workflows
+- required checks match the current workflows, including `validate-whylog / validate-whylog`
 
 ## Maintainer review before any public switch
 

@@ -63,7 +63,18 @@ required_files=(
   .github/workflows/ci.yml
   .github/workflows/pr-metadata.yml
   .github/workflows/release-check.yml
+  .github/workflows/validate-whylog.yml
   .github/dependabot.yml
+  .github/actions/validate-whylog/action.yml
+  .github/actions/validate-whylog/README.md
+  .whylog/config.json
+  .whylog/hooks/prepare-commit-msg
+  .whylog/hooks/commit-msg
+  AGENTS.md
+  CLAUDE.md
+  .github/copilot-instructions.md
+  .cursor/rules/whylog.mdc
+  .windsurf/rules/whylog.md
   scripts/check-pr.sh
   scripts/check-pr-metadata.py
   scripts/open-pr.sh
@@ -93,7 +104,7 @@ for path in "${required_files[@]}"; do
   [[ -e "$path" ]] || record_failure "Missing required file: $path"
 done
 
-for path in scripts/check-pr.sh scripts/open-pr.sh scripts/create-tag.sh scripts/prepare-release.sh scripts/bootstrap-github.sh scripts/check-repo-readiness.sh scripts/run-tests.sh scripts/run-validation.sh scripts/run-validation-gate.sh scripts/run-benchmarks.sh scripts/run-ios-demo-tests.sh scripts/run-release-checks.sh; do
+for path in .whylog/hooks/prepare-commit-msg .whylog/hooks/commit-msg scripts/check-pr.sh scripts/open-pr.sh scripts/create-tag.sh scripts/prepare-release.sh scripts/bootstrap-github.sh scripts/check-repo-readiness.sh scripts/run-tests.sh scripts/run-validation.sh scripts/run-validation-gate.sh scripts/run-benchmarks.sh scripts/run-ios-demo-tests.sh scripts/run-release-checks.sh; do
   [[ -x "$path" ]] || record_failure "Expected executable script: $path"
 done
 
@@ -110,6 +121,14 @@ grep -q '^## Why this change exists$' .github/pull_request_template.md || record
 grep -q '^Lore-id:' .github/pull_request_template.md || record_failure ".github/pull_request_template.md must include Lore-id."
 grep -q 'whylog-style PR body template' CONTRIBUTING.md || record_failure "CONTRIBUTING.md must explain the whylog-style PR body template."
 grep -q 'Prefer merge commits when the branch history is already small and coherent.' docs/MAINTAINERS.md || record_failure "docs/MAINTAINERS.md must describe the merge-commit preference."
+grep -q 'npx --yes --package whylog@0.4.0 whylog doctor' README.md || record_failure "README.md must document the pinned scaffold-only whylog commands."
+grep -q 'npx --yes --package whylog@0.4.0 whylog doctor' README.ko.md || record_failure "README.ko.md must document the pinned scaffold-only whylog commands."
+grep -q 'npx --yes --package whylog@0.4.0 whylog doctor' CONTRIBUTING.md || record_failure "CONTRIBUTING.md must document the pinned scaffold-only whylog commands."
+grep -q 'validate-whylog / validate-whylog' docs/REPOSITORY_SETUP.md || record_failure "docs/REPOSITORY_SETUP.md must mention the validate-whylog required check."
+grep -q 'keep the generated `validate-whylog` workflow independent at first' docs/REPOSITORY_SETUP.md || record_failure "docs/REPOSITORY_SETUP.md must explain the staged whylog workflow rollout."
+grep -q "whylog@0.4.0" .github/actions/validate-whylog/action.yml || record_failure ".github/actions/validate-whylog/action.yml must pin the on-demand whylog fallback."
+grep -q 'actions/checkout@v6' .github/workflows/validate-whylog.yml || record_failure ".github/workflows/validate-whylog.yml must use actions/checkout@v6."
+grep -Eq 'uses:[[:space:]]+\./\.github/actions/validate-whylog' .github/workflows/validate-whylog.yml || record_failure ".github/workflows/validate-whylog.yml must use the local composite action."
 
 python3 -m json.tool .github/labels.json >/dev/null || record_failure ".github/labels.json must be valid JSON."
 
@@ -135,6 +154,17 @@ public_text_files=(
   docs/RELEASING.md
   docs/VERSIONING.md
   docs/REPOSITORY_SETUP.md
+  AGENTS.md
+  CLAUDE.md
+  .github/copilot-instructions.md
+  .cursor/rules/whylog.mdc
+  .windsurf/rules/whylog.md
+  .github/workflows/validate-whylog.yml
+  .github/actions/validate-whylog/action.yml
+  .github/actions/validate-whylog/README.md
+  .whylog/config.json
+  .whylog/hooks/prepare-commit-msg
+  .whylog/hooks/commit-msg
   .github/ISSUE_TEMPLATE/config.yml
   .github/ISSUE_TEMPLATE/bug_report.yml
   .github/ISSUE_TEMPLATE/feature_request.yml

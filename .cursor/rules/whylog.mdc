@@ -1,0 +1,12 @@
+---
+description: whylog project rule
+alwaysApply: true
+---
+
+This repository uses whylog as scaffold-only metadata. Do not add package manifests or lockfiles just to run it.
+Before editing, inspect relevant context with `npx --yes --package whylog@0.4.0 whylog context <path>`.
+Use `npx --yes --package whylog@0.4.0 whylog why <path:line>` for location-level decisions and `npx --yes --package whylog@0.4.0 whylog search <query>` when the path is unclear.
+Avoid previously rejected approaches.
+Commit with `npx --yes --package whylog@0.4.0 whylog commit -i` or `--from-json`.
+Run `npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict` before committing.
+Never include secrets or internal-only details in trailers.

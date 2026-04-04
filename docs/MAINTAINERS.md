@@ -42,6 +42,17 @@ PR bodies must use the whylog-style template in `.github/pull_request_template.m
 - require both `Tested` and `Not-tested`
 - use `Confidence`, `Scope-risk`, and `Reversibility` enum values
 
+## whylog rollout
+
+This repository keeps whylog scaffold-only:
+
+- keep the SwiftPM layout intact
+- do not add `package.json` or Node lockfiles just to run whylog
+- use `npx --yes --package whylog@0.4.0 whylog ...` for local commands
+- keep `validate-whylog.yml` as an independent workflow until you intentionally fold it into other checks
+- keep `--skip-unstructured` enabled until the repository is ready to require structured trailers on every commit
+- keep the on-demand CLI pinned so later whylog releases do not silently change repository policy
+
 ## Labels
 
 Repository labels live in:
@@ -61,7 +72,7 @@ Use them consistently:
 - Avoid squash merges when they would discard useful whylog decision context.
 - Keep the merge message aligned with the validated PR title.
 - Do not merge a PR that is missing whylog context, tested coverage, or a clear follow-up directive.
-- Require green CI before merge unless an administrator override is truly necessary.
+- Require green `ci`, `pr-metadata`, and `validate-whylog` checks before merge unless an administrator override is truly necessary.
 
 ## Release steps
 
