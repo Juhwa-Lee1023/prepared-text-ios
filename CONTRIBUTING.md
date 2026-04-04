@@ -32,6 +32,24 @@ If you are preparing a merge or release candidate, also run:
 ./scripts/check-repo-readiness.sh
 ```
 
+## Whylog setup
+
+This repository keeps whylog scaffold-only on top of a Swift Package layout:
+
+- no `package.json`
+- no committed Node lockfiles
+- no `npm install` step just to use whylog
+
+Use the on-demand CLI path instead:
+
+```bash
+npx --yes --package whylog whylog doctor
+npx --yes --package whylog whylog commit -i
+npx --yes --package whylog whylog validate --range origin/main..HEAD --skip-unstructured --strict
+```
+
+`--skip-unstructured` stays enabled for now so existing history can remain mixed while new work adopts whylog trailers.
+
 ## Branch naming
 
 Use short descriptive branch names in kebab case. Recommended prefixes:

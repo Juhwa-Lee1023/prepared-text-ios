@@ -15,7 +15,7 @@ default_branch="main"
 enable_discussions="false"
 create_if_missing="false"
 require_codeowner_review="true"
-required_checks=("ci / build-and-test" "pr-metadata / validate-pr-metadata")
+required_checks=("ci / build-and-test" "pr-metadata / validate-pr-metadata" "validate-whylog / validate-whylog")
 
 usage() {
   cat <<'EOF'

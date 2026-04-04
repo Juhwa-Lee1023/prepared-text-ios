@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "idLength": 10,
+  "validation": {
+    "mode": "warn",
+    "blockedPatterns": [],
+    "internalHosts": []
+  },
+  "query": {
+    "maxCommits": 50
+  },
+  "stale": {
+    "ageDays": 90,
+    "driftCommits": 5
+  },
+  "instructions": {
+    "targets": [
+      "claude",
+      "copilot",
+      "cursor",
+      "windsurf",
+      "agents"
+    ]
+  }
+}

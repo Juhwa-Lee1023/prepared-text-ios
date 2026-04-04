@@ -1,0 +1,18 @@
+name: validate-whylog
+description: Validate commit context with a local or on-demand whylog CLI
+
+inputs:
+  target:
+    description: Validation target flags
+    required: false
+    default: --rev HEAD --strict --skip-unstructured
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        if [ -x ./node_modules/.bin/whylog ]; then
+          exec ./node_modules/.bin/whylog validate ${{ inputs.target }}
+        fi
+        exec npx --yes --package whylog whylog validate ${{ inputs.target }}
