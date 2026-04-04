@@ -24,7 +24,7 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: ./.github/actions/validate-whylog
         with:
-          target: --range "${{ github.event.pull_request.base.sha }}..${{ github.sha }}" --strict --skip-unstructured
+          target: --range ${{ github.event.pull_request.base.sha }}..${{ github.sha }} --strict --skip-unstructured
       - name: Validate pushed head
         if: github.event_name == 'push'
         uses: ./.github/actions/validate-whylog
