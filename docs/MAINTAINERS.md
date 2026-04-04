@@ -35,12 +35,15 @@ Validate locally before opening a PR:
 ./scripts/check-pr.sh --title "fix(core): summary" --body-file /path/to/body.md
 ```
 
-PR bodies must use the whylog-style template in `.github/pull_request_template.md`:
+PR bodies must use the sectioned OSS template in `.github/pull_request_template.md`:
 
-- keep `Lore-id` lowercase hexadecimal
-- require concrete `Constraint`, `Rejected`, and `Directive` entries
-- require both `Tested` and `Not-tested`
-- use `Confidence`, `Scope-risk`, and `Reversibility` enum values
+- `## Summary`
+- `## Changes`
+- `## Testing`
+- `## Risks and follow-ups`
+- `## Related issues`
+
+whylog remains commit-only in this repository. Do not mirror whylog trailers into PR bodies.
 
 ## whylog rollout
 
@@ -69,9 +72,9 @@ Use them consistently:
 ## Merge expectations
 
 - Prefer merge commits when the branch history is already small and coherent.
-- Avoid squash merges when they would discard useful whylog decision context.
+- Avoid squash merges when they would discard useful commit history.
 - Keep the merge message aligned with the validated PR title.
-- Do not merge a PR that is missing whylog context, tested coverage, or a clear follow-up directive.
+- Do not merge a PR that is missing a clear summary, concrete testing coverage, or meaningful follow-up context when needed.
 - Require green `ci`, `pr-metadata`, and `validate-whylog` checks before merge unless an administrator override is truly necessary.
 
 ## Release steps

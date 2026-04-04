@@ -26,28 +26,15 @@ TITLE_PATTERN = re.compile(
     r"^(?P<type>feat|fix|docs|refactor|perf|test|build|ci|chore|release)(\([a-z0-9._/-]+\))?: .+\S$"
 )
 
-WHYLOG_HEADING = "Why this change exists"
-LORE_ID_PATTERN = re.compile(r"^[0-9a-f]{8,16}$")
-WHYLOG_SINGLE_VALUE_FIELDS = {
-    "Lore-id",
-    "Confidence",
-    "Scope-risk",
-    "Reversibility",
-}
-WHYLOG_REQUIRED_FIELDS = [
-    "Lore-id",
-    "Constraint",
-    "Rejected",
-    "Directive",
-    "Tested",
-    "Not-tested",
-    "Confidence",
-    "Scope-risk",
-    "Reversibility",
+REQUIRED_SECTIONS = [
+    "Summary",
+    "Changes",
+    "Testing",
+    "Risks and follow-ups",
+    "Related issues",
 ]
-CONFIDENCE_VALUES = {"low", "medium", "high"}
-SCOPE_RISK_VALUES = {"low", "medium", "high"}
-REVERSIBILITY_VALUES = {"clean", "partial", "hard"}
+SECTION_PATTERN = re.compile(r"^## (?P<heading>.+?)\s*$", re.MULTILINE)
+HTML_COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 BOT_LOGINS = {
     "app/dependabot",
     "dependabot[bot]",
@@ -76,7 +63,7 @@ def load_from_event(path: str) -> tuple[str, str, str]:
 
 def looks_empty(value: str) -> bool:
     cleaned = value.strip()
-    if cleaned in {"", "-", "TBD", "None.", "Not applicable.", "N/A"}:
+    if cleaned in {"", "-", "TBD"}:
         return True
 
     return False
@@ -86,18 +73,21 @@ def is_bot_author(author_login: str) -> bool:
     return author_login in BOT_LOGINS
 
 
-def parse_whylog_fields(body: str) -> dict[str, list[str]]:
-    fields: dict[str, list[str]] = {}
+def strip_html_comments(value: str) -> str:
+    return HTML_COMMENT_PATTERN.sub("", value)
 
-    for line in body.splitlines():
-        match = re.match(r"^(?P<key>[A-Za-z][A-Za-z-]*):\s*(?P<value>.*)$", line)
-        if not match:
-            continue
-        key = match.group("key").strip()
-        value = match.group("value").strip()
-        fields.setdefault(key, []).append(value)
 
-    return fields
+def parse_sections(body: str) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    matches = list(SECTION_PATTERN.finditer(body))
+
+    for index, match in enumerate(matches):
+        heading = match.group("heading").strip()
+        start = match.end()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
+        sections[heading] = body[start:end].strip()
+
+    return sections
 
 
 def validate_title(title: str, errors: list[str]) -> None:
@@ -117,53 +107,31 @@ def validate_title(title: str, errors: list[str]) -> None:
         errors.append(f"Unsupported PR type `{match.group('type')}`.")
 
 
-def validate_whylog_body(body: str, errors: list[str]) -> None:
+def validate_template_body(body: str, errors: list[str]) -> None:
     if not body.strip():
         errors.append("PR body is required.")
         return
 
-    if f"## {WHYLOG_HEADING}" not in body:
-        errors.append(f"PR body must include `## {WHYLOG_HEADING}`.")
-        return
+    sections = parse_sections(body)
 
-    fields = parse_whylog_fields(body)
-
-    for field in WHYLOG_REQUIRED_FIELDS:
-        if field not in fields:
-            errors.append(f"Missing required whylog field `{field}:`.")
+    for section in REQUIRED_SECTIONS:
+        if section not in sections:
+            errors.append(f"PR body must include `## {section}`.")
 
     if errors:
         return
 
-    for field in WHYLOG_REQUIRED_FIELDS:
-        non_empty_values = [value for value in fields[field] if not looks_empty(value)]
-        if not non_empty_values:
-            errors.append(f"`{field}:` must not be empty.")
-
-    if errors:
-        return
-
-    for field in WHYLOG_SINGLE_VALUE_FIELDS:
-        if len(fields[field]) != 1:
-            errors.append(f"`{field}:` must appear exactly once.")
-
-    lore_id = fields["Lore-id"][0]
-    if not LORE_ID_PATTERN.match(lore_id):
-        errors.append("`Lore-id:` must be lowercase hexadecimal and 8 to 16 characters long.")
-
-    if fields["Confidence"][0] not in CONFIDENCE_VALUES:
-        errors.append("`Confidence:` must be one of: low, medium, high.")
-    if fields["Scope-risk"][0] not in SCOPE_RISK_VALUES:
-        errors.append("`Scope-risk:` must be one of: low, medium, high.")
-    if fields["Reversibility"][0] not in REVERSIBILITY_VALUES:
-        errors.append("`Reversibility:` must be one of: clean, partial, hard.")
+    for section in REQUIRED_SECTIONS:
+        cleaned = strip_html_comments(sections[section]).strip()
+        if looks_empty(cleaned):
+            errors.append(f"`## {section}` must not be empty.")
 
 
 def validate_body(body: str, author_login: str, errors: list[str]) -> None:
     if is_bot_author(author_login):
         return
 
-    validate_whylog_body(body, errors)
+    validate_template_body(body, errors)
 
 
 def main() -> int:

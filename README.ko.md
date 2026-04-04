@@ -139,44 +139,68 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 엔진 개선
+## Phase 1 엔진 개선 사항
 
-Phase 1의 핵심은 이 라이브러리를 “얇은 텍스트 유틸리티”보다 “재사용 가능한 읽기 전용 레이아웃 엔진”에 가깝게 만드는 것입니다.
+이 라이브러리는 이제 단순한 "text view wrapper"보다, 읽기 전용 repeated-width surface를 위한 reusable layout engine에 더 가깝게 동작합니다.
 
-- cache identity 는 plain string 기준이 아니라 attributed range 변화까지 반영하는 deterministic layout key 로 정리됩니다
-- inline attachment 가 측정에 영향을 주는 경우 attachment metric 도 layout identity 에 포함됩니다
-- width normalization 은 `PreparedTextMeasurementOptions` 로 명시적으로 선택합니다
-- pixel-aligned measurement 는 숨겨진 heuristic 이 아니라 public opt-in mode 입니다
-- invalidation / background trim 은 `PreparedInvalidationCenter` 와 `PreparedTextSystem` 으로 명시적으로 제어합니다
-- diagnostics 는 `PreparedTextSystem.diagnosticsSnapshot()` 으로 확인할 수 있습니다
+- Stage 0 / Stage 1 모두에서 attributed-range 기반의 deterministic cache identity
+- `WidthNormalizationPolicy` 로 드러나는 explicit width normalization
+- `PreparedTextMeasurementOptions` 로 제어하는 public pixel-aligned measurement
+- `PreparedInvalidationCenter` 기반 explicit invalidation
+- `PreparedTextDiagnosticsSnapshot` 기반 public diagnostics
+- `PreparedAttachmentRegistry` 기반 attachment-aware placeholder / resolver plumbing
 
 예시:
 
 ```swift
-let measurementOptions = PreparedTextMeasurementOptions(
-    widthNormalizationPolicy: .bucketed(points: 4),
-    pixelMeasurementPolicy: .alignedToScale
+import PretextCore
+
+let system = PreparedTextSystem.shared
+let prepared = system.prepare(
+    NSAttributedString(string: "Prepared body copy"),
+    sourceID: .init("feed/body")
 )
 
-let label = MeasurementCachingLabel().prepared(
-    sourceID: .init("feed/body"),
-    measurementOptions: measurementOptions
+let measurementEnv = MeasurementEnv(
+    scale: 2,
+    contentSizeCategory: "large",
+    measurementOptions: PreparedTextMeasurementOptions(
+        widthNormalizationPolicy: .bucketed(points: 4),
+        pixelMeasurementPolicy: .alignedToScale
+    )
+)
+let layoutOptions = PreparedTextLayoutOptions(
+    maximumNumberOfLines: 2,
+    lineBreakMode: .truncateTail,
+    alignment: .natural,
+    layoutDirection: .leftToRight
 )
 
-let preparedView = PreparedLabelView().prepared(
-    attributedText: NSAttributedString(string: "Prepared body copy"),
-    sourceID: .init("feed/body"),
-    measurementOptions: measurementOptions,
-    maxLayoutWidth: 320
+let packet = system.displayLayoutPacket(
+    prepared,
+    maxWidth: 320,
+    lineHeight: prepared.defaultLineHeight,
+    containerWidth: 320,
+    env: measurementEnv,
+    options: layoutOptions
 )
-
-let diagnostics = PreparedTextSystem.shared.diagnosticsSnapshot()
-PreparedInvalidationCenter.shared.trimForBackground()
+let diagnostics = system.diagnosticsSnapshot()
+let coordinateMap = packet.sourceCoordinateMap
 ```
 
-width precision 이 실제 의미를 가지는 surface 라면 exact mode 를 사용하세요.
-self-sizing loop 에서 비슷한 width proposal 이 반복되는 surface 라면 bucketed mode 가 맞습니다.
-fractional width churn 때문에 measurement jitter 가 보인다면 pixel-aligned mode 를 같이 검토하세요.
+visual parity가 더 중요하면 exact width를 유지하세요.
+근접한 width proposal이 반복되는 self-sizing loop라면 약간의 over-measure를 감수하고 bucketed width를 쓰는 편이 낫습니다.
+fractional width jitter 때문에 반복 측정이 흔들리면 pixel-aligned measurement를 고려하세요.
+
+attachment 지원은 이제 identity-aware / placeholder-aware 수준까지 올라왔지만, 여전히 full async attachment rendering framework는 아닙니다.
+
+Phase 1 엔진 위에는 다음과 같은 narrow follow-up surface도 추가로 올라가 있습니다.
+
+- 읽기 전용 line limit / truncation / alignment / layout direction 제어를 위한 `PreparedTextLayoutOptions`
+- displayed source span inspection 을 위한 `PreparedTextSourceCoordinateMap`
+- circle obstacle exclusion layout 을 위한 `PreparedTextObstacleLayouter`
+
+이 surface 들도 의도적으로 narrow 하며, 프로젝트를 broad text toolkit 으로 넓히려는 목적은 아닙니다. 이번 Phase 1의 핵심 가치는 어디까지나 위의 deterministic cache / invalidation / diagnostics 강화입니다.
 
 ## 개발
 
@@ -188,12 +212,13 @@ swift test
 swift run PretextValidation --mode report
 swift run PretextValidation --mode gate
 swift run PretextBenchmarks
+./scripts/run-benchmarks.sh
 ./scripts/run-ios-demo-tests.sh
 ./scripts/run-release-checks.sh
 ./scripts/check-repo-readiness.sh
 ```
 
-이 저장소는 npm 의존성을 추가하지 않고 whylog scaffold만 얹어 둔 상태입니다:
+커밋 워크플로는 whylog를 scaffold-only 모드로 사용합니다:
 
 ```bash
 npx --yes --package whylog@0.4.0 whylog doctor
@@ -201,18 +226,12 @@ npx --yes --package whylog@0.4.0 whylog commit -i
 npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict
 ```
 
-`validate-whylog` workflow는 저장소가 structured trailer에 점진적으로 적응하는 동안 기존 GitHub Actions 체크와 분리해서 유지하고, on-demand fallback은 whylog `0.4.0` 으로 고정합니다.
-
 maintainer / 릴리즈 문서:
 
 - [Maintainers guide](docs/MAINTAINERS.md)
 - [Versioning](docs/VERSIONING.md)
 - [Releasing](docs/RELEASING.md)
 - [Repository setup](docs/REPOSITORY_SETUP.md)
-- [Validation](docs/Validation.md)
-- [Benchmarks](docs/Benchmarks.md)
-- [Migration guide](docs/MigrationGuide.md)
-- [Known gaps](docs/KnownGaps.md)
 
 ## 데모 앱
 

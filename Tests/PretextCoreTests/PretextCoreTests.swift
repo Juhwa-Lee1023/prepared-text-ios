@@ -269,6 +269,87 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertNotEqual(firstSignature, secondSignature)
     }
 
+    func testPreparedAttachmentRegistryResolvedMetricsChangePreparedIdentity() {
+        let registry = PreparedAttachmentRegistry()
+        let engine = DefaultPreparedTextEngine(
+            measurer: CachedFramesetterTextMeasurer(),
+            attachmentResolver: registry
+        )
+        let attachmentID = PreparedAttachmentID("hero")
+        let attributed = referencedAttachmentText(
+            id: attachmentID,
+            placeholderBounds: CGRect(x: 0, y: 0, width: 12, height: 12)
+        )
+
+        let placeholderPrepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("attachment-registry"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        registry.setResolvedAttachment(
+            PreparedResolvedAttachment(
+                bounds: CGRect(x: 0, y: 0, width: 42, height: 20),
+                contentIdentity: "hero@2x"
+            ),
+            for: attachmentID,
+            invalidate: []
+        )
+        let resolvedPrepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("attachment-registry"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        XCTAssertNotEqual(
+            placeholderPrepared.storage.layoutIdentity.signature,
+            resolvedPrepared.storage.layoutIdentity.signature
+        )
+    }
+
+    func testDisplayLayoutPacketProducesSourceCoordinateMapForMiddleTruncation() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Alpha Beta Gamma Delta"),
+            sourceID: PreparedTextSourceID("display-layout-middle"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let packet = engine.displayLayoutPacket(
+            prepared,
+            maxWidth: 70,
+            lineHeight: prepared.defaultLineHeight,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateMiddle,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        XCTAssertEqual(packet.lines.count, 1)
+        XCTAssertTrue(packet.lines[0].isTruncated)
+        XCTAssertTrue(packet.lines[0].attributedText.string.contains("…"))
+        XCTAssertEqual(packet.sourceCoordinateMap.lines.count, 1)
+        XCTAssertEqual(packet.sourceCoordinateMap.lines[0].sourceSpans.count, 3)
+        XCTAssertEqual(packet.sourceCoordinateMap.lines[0].sourceSpans.filter { $0.sourceUTF16Range == nil }.count, 1)
+        XCTAssertEqual(
+            packet.sourceCoordinateMap.lines[0].visibleSourceUTF16Ranges.count,
+            2
+        )
+    }
+
+    func testPreparedTextCursorUtf16RoundTripsAcrossPreparedSource() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Hello🙂\nWorld"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let utf16Offset = 1
+        let cursor = prepared.cursor(forUTF16Offset: utf16Offset)
+
+        XCTAssertEqual(prepared.utf16Offset(for: cursor), utf16Offset)
+    }
+
     func testWidthNormalizationPolicyCanBucketNearbyWidths() {
         let exact = MeasurementEnv(
             scale: 2,
@@ -402,20 +483,14 @@ final class PretextCoreTests: XCTestCase {
             widthInPixels: env.normalizedWidth(96),
             lineHeightKey: env.cacheScalarKey(literal.defaultLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: literal.storage.options),
-            layoutDirectionPlaceholder: nil,
-            maxLines: nil,
-            truncationModeIdentifier: nil
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: literal.storage.options)
         )
         let cssNormalKey = LayoutPacketKey(
             identity: cssNormal.storage.layoutIdentity,
             widthInPixels: env.normalizedWidth(96),
             lineHeightKey: env.cacheScalarKey(cssNormal.defaultLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: cssNormal.storage.options),
-            layoutDirectionPlaceholder: nil,
-            maxLines: nil,
-            truncationModeIdentifier: nil
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: cssNormal.storage.options)
         )
 
         XCTAssertNotEqual(literalKey, cssNormalKey)
@@ -601,6 +676,97 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.invalidations.lastReason, .attachmentMetricsChanged)
         XCTAssertEqual(snapshot.preparedTextCache.currentEntryCount, 1)
         XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 1)
+    }
+
+    @MainActor
+    func testPreparedAttachmentRegistryTriggersTargetedInvalidationForRecordedSources() async {
+        let center = PreparedInvalidationCenter()
+        let registry = PreparedAttachmentRegistry(invalidationCenter: center)
+        let system = PreparedTextSystem(
+            measurer: CachedFramesetterTextMeasurer(),
+            invalidationCenter: center,
+            attachmentResolver: registry
+        )
+        let attachmentID = PreparedAttachmentID("targeted-attachment")
+        let prepared = system.prepare(
+            referencedAttachmentText(
+                id: attachmentID,
+                placeholderBounds: CGRect(x: 0, y: 0, width: 10, height: 10)
+            ),
+            sourceID: PreparedTextSourceID("attachment-source")
+        )
+
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+        registry.setResolvedAttachment(
+            PreparedResolvedAttachment(
+                bounds: CGRect(x: 0, y: 0, width: 24, height: 16),
+                contentIdentity: "targeted"
+            ),
+            for: attachmentID
+        )
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.targetedInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .attachmentMetricsChanged)
+    }
+
+    @MainActor
+    func testPreparedAttachmentRegistryClearsStaleRecordedUsageWhenSourceChangesAttachments() async {
+        let center = PreparedInvalidationCenter()
+        let registry = PreparedAttachmentRegistry(invalidationCenter: center)
+        let system = PreparedTextSystem(
+            measurer: CachedFramesetterTextMeasurer(),
+            invalidationCenter: center,
+            attachmentResolver: registry
+        )
+        let firstAttachmentID = PreparedAttachmentID("attachment-a")
+        let secondAttachmentID = PreparedAttachmentID("attachment-b")
+        let sourceID = PreparedTextSourceID("attachment-source")
+
+        let firstPrepared = system.prepare(
+            referencedAttachmentText(
+                id: firstAttachmentID,
+                placeholderBounds: CGRect(x: 0, y: 0, width: 10, height: 10)
+            ),
+            sourceID: sourceID
+        )
+        _ = system.layoutPacket(firstPrepared, maxWidth: 160, lineHeight: firstPrepared.defaultLineHeight, env: .default)
+
+        let secondPrepared = system.prepare(
+            referencedAttachmentText(
+                id: secondAttachmentID,
+                placeholderBounds: CGRect(x: 0, y: 0, width: 12, height: 12)
+            ),
+            sourceID: sourceID
+        )
+        _ = system.layoutPacket(secondPrepared, maxWidth: 160, lineHeight: secondPrepared.defaultLineHeight, env: .default)
+
+        registry.setResolvedAttachment(
+            PreparedResolvedAttachment(
+                bounds: CGRect(x: 0, y: 0, width: 24, height: 16),
+                contentIdentity: "stale"
+            ),
+            for: firstAttachmentID
+        )
+        await settleInvalidation()
+
+        var snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.fullInvalidationCount, 0)
+        XCTAssertEqual(snapshot.invalidations.targetedInvalidationCount, 0)
+
+        registry.setResolvedAttachment(
+            PreparedResolvedAttachment(
+                bounds: CGRect(x: 0, y: 0, width: 20, height: 14),
+                contentIdentity: "current"
+            ),
+            for: secondAttachmentID
+        )
+        await settleInvalidation()
+
+        snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.targetedInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .attachmentMetricsChanged)
     }
 
     @MainActor
@@ -808,10 +974,13 @@ final class PretextCoreTests: XCTestCase {
     func testDocsDescribeExperimentalTextPreparedAsSourceDrivenOnly() throws {
         let migrationGuide = try readRepositoryFile("docs/MigrationGuide.md")
         let knownGaps = try readRepositoryFile("docs/KnownGaps.md")
+        let readme = try readRepositoryFile("README.md")
 
         XCTAssertTrue(migrationGuide.contains("experimental `Text.prepared(source:)`"))
         XCTAssertTrue(migrationGuide.contains("zero-arg `Text.prepared()` 는 지원하지 않는다"))
         XCTAssertTrue(knownGaps.contains("Experimental `Text.prepared(source:)` is syntax sugar only"))
+        XCTAssertTrue(readme.contains("Experimental `Text.prepared(source:)`"))
+        XCTAssertTrue(readme.contains("the `source` argument is authoritative"))
     }
 
     func testExperimentalTextPreparedSupportStaysSourceDrivenAndNonReflective() throws {
@@ -877,6 +1046,28 @@ final class PretextCoreTests: XCTestCase {
             attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
         )
         attributed.addAttribute(.attachment, value: attachment, range: NSRange(location: 0, length: attributed.length))
+        return attributed
+    }
+
+    private func referencedAttachmentText(id: PreparedAttachmentID, placeholderBounds: CGRect) -> NSAttributedString {
+        let attachment = PreparedTextAttachment(
+            reference: PreparedAttachmentReference(
+                id: id,
+                placeholderBounds: placeholderBounds
+            )
+        )
+        attachment.bounds = placeholderBounds
+
+        let attributed = NSMutableAttributedString(
+            string: "\u{FFFC}",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+        )
+        attributed.addAttribute(.attachment, value: attachment, range: NSRange(location: 0, length: attributed.length))
+        attributed.addAttribute(
+            .preparedAttachmentReference,
+            value: attachment.reference,
+            range: NSRange(location: 0, length: attributed.length)
+        )
         return attributed
     }
 

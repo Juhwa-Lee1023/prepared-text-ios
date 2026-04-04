@@ -37,6 +37,7 @@ public extension PreparedTextEngine {
 
 public final class DefaultPreparedTextEngine: PreparedTextEngine {
     public let measurer: CachedFramesetterTextMeasurer
+    public let attachmentResolver: PreparedAttachmentResolving?
 
     private let segmentMeasurementCache = SegmentMeasurementCache()
     private let preparedTextCache = CostBoundCache<PreparedTextCacheKey, PreparedText>(
@@ -66,8 +67,12 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     private var observedLayoutLineCount = 0
     private var observedLayoutCount = 0
 
-    public init(measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer()) {
+    public init(
+        measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer(),
+        attachmentResolver: PreparedAttachmentResolving? = PreparedAttachmentRegistry.shared
+    ) {
         self.measurer = measurer
+        self.attachmentResolver = attachmentResolver
     }
 
     public func prepare(_ attributedText: NSAttributedString, options: PreparedTextOptions = PreparedTextOptions()) -> PreparedText {
@@ -111,10 +116,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             widthInPixels: env.normalizedWidth(maxWidth),
             lineHeightKey: env.cacheScalarKey(resolvedLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
-            layoutDirectionPlaceholder: nil,
-            maxLines: nil,
-            truncationModeIdentifier: nil
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options)
         )
 
         if let cached = layoutPacketCache.value(forKey: key) {
@@ -123,32 +125,34 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             return cached
         }
 
-        var drawLines: [PreparedDrawLine] = []
-        drawLines.reserveCapacity(8)
+        let packet = PreparedTextSignposts.measure("Stage1LayoutPacket") {
+            var drawLines: [PreparedDrawLine] = []
+            drawLines.reserveCapacity(8)
 
-        var cursor = LayoutCursor()
-        while let line = rawNextLine(prepared, cursor: cursor, maxWidth: resolvedWidth) {
-            let attributed = attributedLine(prepared, line: line)
-            let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
-            let fragment = buildFragment(
-                for: prepared,
-                line: line,
-                attributedLine: attributed,
-                ctLine: ctLine,
-                requestedLineHeight: resolvedLineHeight
+            var cursor = LayoutCursor()
+            while let line = rawNextLine(prepared, cursor: cursor, maxWidth: resolvedWidth) {
+                let attributed = attributedLine(prepared, line: line)
+                let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+                let fragment = buildFragment(
+                    for: prepared,
+                    line: line,
+                    attributedLine: attributed,
+                    ctLine: ctLine,
+                    requestedLineHeight: resolvedLineHeight
+                )
+                drawLines.append(PreparedDrawLine(fragment: fragment, attributedText: attributed, ctLine: ctLine))
+                cursor = line.end
+            }
+
+            let result = LayoutResult(
+                fragments: drawLines.map(\.fragment),
+                height: drawLines.reduce(0) { $0 + $1.fragment.blockAdvance },
+                maxPaintWidth: drawLines.map(\.fragment.paintWidth).max() ?? 0
             )
-            drawLines.append(PreparedDrawLine(fragment: fragment, attributedText: attributed, ctLine: ctLine))
-            cursor = line.end
+            return PreparedLayoutPacket(result: result, lines: drawLines)
         }
-
-        let result = LayoutResult(
-            fragments: drawLines.map(\.fragment),
-            height: drawLines.reduce(0) { $0 + $1.fragment.blockAdvance },
-            maxPaintWidth: drawLines.map(\.fragment.paintWidth).max() ?? 0
-        )
-        let packet = PreparedLayoutPacket(result: result, lines: drawLines)
         layoutPacketCache.insert(packet, forKey: key)
-        recordObservedLayout(result.lineCount)
+        recordObservedLayout(packet.result.lineCount)
         return packet
     }
 
@@ -328,7 +332,8 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         sourceID: PreparedTextSourceID?,
         options: PreparedTextOptions
     ) -> PreparedText {
-        let signature = attributedText.pretextLayoutSignature()
+        let resolvedSource = resolvedAttachmentSource(from: attributedText, sourceID: sourceID)
+        let signature = resolvedSource.pretextLayoutSignature()
         let key = PreparedTextCacheKey(
             identity: sourceID.map { CacheIdentity.sourceID($0, signature) } ?? .attributed(signature),
             whiteSpaceMode: options.whiteSpaceMode,
@@ -340,31 +345,33 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             return cached
         }
 
-        let sourceSnapshot = attributedText.copy() as? NSAttributedString ?? NSAttributedString(attributedString: attributedText)
-        let segmenter = TextSegmenter(options: options, segmentMeasurementCache: segmentMeasurementCache)
-        let core = PreparedTextCore(
-            segments: segmenter.segment(sourceSnapshot),
-            defaultLineHeight: segmenter.defaultLineHeight(for: sourceSnapshot),
-            tabStopAdvance: segmenter.tabStopAdvance(for: sourceSnapshot),
-            prefersNativeLineBreaking: segmenter.preservesSourceCoordinateSpace(for: sourceSnapshot)
-                && preferredNativeLineBreaking(for: sourceSnapshot.string)
-        )
-        let nativeSource = nativeLineBreakingSource(
-            from: sourceSnapshot,
-            tabStopAdvance: core.tabStopAdvance,
-            prefersNativeLineBreaking: core.prefersNativeLineBreaking
-        )
-        let prepared = PreparedText(
-            storage: PreparedTextStorage(
-                source: sourceSnapshot,
-                core: core,
-                options: options,
-                sourceID: sourceID,
-                layoutIdentity: key.identity,
-                nativeLineBreakingSource: nativeSource,
-                nativeTypesetter: nativeSource.map { CTTypesetterCreateWithAttributedString($0 as CFAttributedString) }
+        let prepared = PreparedTextSignposts.measure("Stage1Prepare") {
+            let sourceSnapshot = resolvedSource.copy() as? NSAttributedString ?? NSAttributedString(attributedString: resolvedSource)
+            let segmenter = TextSegmenter(options: options, segmentMeasurementCache: segmentMeasurementCache)
+            let core = PreparedTextCore(
+                segments: segmenter.segment(sourceSnapshot),
+                defaultLineHeight: segmenter.defaultLineHeight(for: sourceSnapshot),
+                tabStopAdvance: segmenter.tabStopAdvance(for: sourceSnapshot),
+                prefersNativeLineBreaking: segmenter.preservesSourceCoordinateSpace(for: sourceSnapshot)
+                    && preferredNativeLineBreaking(for: sourceSnapshot.string)
             )
-        )
+            let nativeSource = nativeLineBreakingSource(
+                from: sourceSnapshot,
+                tabStopAdvance: core.tabStopAdvance,
+                prefersNativeLineBreaking: core.prefersNativeLineBreaking
+            )
+            return PreparedText(
+                storage: PreparedTextStorage(
+                    source: sourceSnapshot,
+                    core: core,
+                    options: options,
+                    sourceID: sourceID,
+                    layoutIdentity: key.identity,
+                    nativeLineBreakingSource: nativeSource,
+                    nativeTypesetter: nativeSource.map { CTTypesetterCreateWithAttributedString($0 as CFAttributedString) }
+                )
+            )
+        }
         preparedTextCache.insert(prepared, forKey: key)
         return prepared
     }
@@ -737,6 +744,76 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     private func recordObservedLayout(_ lineCount: Int) {
         observedLayoutCount += 1
         observedLayoutLineCount += lineCount
+    }
+
+    private func resolvedAttachmentSource(
+        from attributedText: NSAttributedString,
+        sourceID: PreparedTextSourceID?
+    ) -> NSAttributedString {
+        guard attributedText.length > 0 else {
+            return attributedText.copy() as? NSAttributedString ?? NSAttributedString(attributedString: attributedText)
+        }
+
+        let mutable = NSMutableAttributedString(attributedString: attributedText)
+        var touched = false
+        var referencedAttachmentIDs: Set<PreparedAttachmentID> = []
+
+        mutable.enumerateAttributes(in: NSRange(location: 0, length: mutable.length), options: []) { attributes, range, _ in
+            guard let attachment = attributes[.attachment] as? NSTextAttachment else {
+                return
+            }
+
+            let reference = (attributes[.preparedAttachmentReference] as? PreparedAttachmentReference)
+                ?? (attachment as? PreparedTextAttachment)?.reference
+            guard let reference else {
+                return
+            }
+
+            referencedAttachmentIDs.insert(reference.id)
+            let resolvedAttachment = attachmentResolver?.resolvedAttachment(for: reference)
+            let resolvedBounds = resolvedAttachment?.bounds ?? reference.placeholderBounds
+            let replacement = clonedAttachment(from: attachment, reference: reference, bounds: resolvedBounds)
+
+            mutable.removeAttribute(.attachment, range: range)
+            mutable.addAttribute(.attachment, value: replacement, range: range)
+            mutable.addAttribute(.preparedAttachmentReference, value: reference, range: range)
+
+            if let contentIdentity = resolvedAttachment?.contentIdentity {
+                mutable.addAttribute(.preparedResolvedAttachmentIdentity, value: contentIdentity, range: range)
+            } else {
+                mutable.removeAttribute(.preparedResolvedAttachmentIdentity, range: range)
+            }
+
+            touched = true
+        }
+
+        if let registry = attachmentResolver as? PreparedAttachmentRegistry {
+            registry.recordUsage(of: referencedAttachmentIDs, sourceID: sourceID)
+        }
+
+        if touched {
+            return mutable.copy() as? NSAttributedString ?? mutable
+        }
+
+        return attributedText.copy() as? NSAttributedString ?? NSAttributedString(attributedString: attributedText)
+    }
+
+    private func clonedAttachment(
+        from attachment: NSTextAttachment,
+        reference: PreparedAttachmentReference,
+        bounds: CGRect
+    ) -> NSTextAttachment {
+        let cloned: NSTextAttachment
+        if attachment is PreparedTextAttachment {
+            cloned = PreparedTextAttachment(reference: reference)
+        } else {
+            cloned = NSTextAttachment(data: nil, ofType: nil)
+        }
+
+        cloned.bounds = bounds
+        cloned.fileWrapper = attachment.fileWrapper
+        cloned.image = attachment.image
+        return cloned
     }
 }
 

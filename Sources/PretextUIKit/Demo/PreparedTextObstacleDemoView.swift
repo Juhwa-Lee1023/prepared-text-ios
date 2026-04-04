@@ -317,87 +317,37 @@ public final class PreparedTextObstacleDemoView: UIView {
             return RenderPlan(textRect: textRect, rowHeight: 0, obstacles: [], fragments: [], splitRowIndices: [], rowCount: 0)
         }
 
-        let rowHeight = max(configuration.lineHeightOverride ?? prepared.defaultLineHeight, 1)
         let obstacles = resolvedObstacles(in: textRect)
-
-        var cursor = LayoutCursor()
-        var rowY = textRect.minY
-        var rowIndex = 0
-        var fragments: [RenderedFragment] = []
-        var splitRowIndices = Set<Int>()
-
-        layoutLoop: while rowY < textRect.maxY - 0.5 {
-            let bandRect = CGRect(x: textRect.minX, y: rowY, width: textRect.width, height: rowHeight)
-            let spans = availableSpans(in: bandRect, textRect: textRect, obstacles: obstacles)
-            if spans.count > 1 {
-                splitRowIndices.insert(rowIndex)
-            }
-
-            if spans.isEmpty {
-                rowY += rowHeight
-                rowIndex += 1
-                continue
-            }
-
-            var rowProgressed = false
-            var exhaustedText = false
-            for span in spans {
-                guard let line = textSystem.engine.nextLine(prepared, cursor: cursor, maxWidth: span.width) else {
-                    exhaustedText = true
-                    break
-                }
-
-                if line.end == cursor, line.paintEnd == line.start {
-                    continue
-                }
-
-                let attributedLine = textSystem.engine.attributedLine(prepared, line: line)
-                let ctLine = CTLineCreateWithAttributedString(attributedLine as CFAttributedString)
-                var ascent: CGFloat = 0
-                var descent: CGFloat = 0
-                var leading: CGFloat = 0
-                _ = CTLineGetTypographicBounds(ctLine, &ascent, &descent, &leading)
-
-                fragments.append(
-                    RenderedFragment(
-                        rowIndex: rowIndex,
-                        rowY: rowY,
-                        originX: span.minX,
-                        spanWidth: span.width,
-                        attributedText: attributedLine,
-                        ctLine: ctLine,
-                        ascent: ascent,
-                        descent: descent,
-                        leading: leading,
-                        plainText: line.text ?? attributedLine.string
-                    )
-                )
-                let consumedHardBreak = lineConsumesHardBreak(line, in: prepared)
-                cursor = line.end
-                rowProgressed = true
-                if consumedHardBreak {
-                    break
-                }
-            }
-
-            if !rowProgressed {
-                break
-            }
-
-            rowY += rowHeight
-            rowIndex += 1
-            if exhaustedText {
-                break layoutLoop
-            }
+        let layout = PreparedTextObstacleLayouter(textSystem: textSystem).layout(
+            prepared: prepared,
+            in: textRect,
+            obstacles: obstacles.map(\.circle),
+            lineHeight: configuration.lineHeightOverride ?? prepared.defaultLineHeight,
+            obstaclePadding: configuration.obstaclePadding,
+            minimumSpanWidth: configuration.minimumSpanWidth
+        )
+        let fragments = layout.fragments.map {
+            RenderedFragment(
+                rowIndex: $0.rowIndex,
+                rowY: $0.rowY,
+                originX: $0.originX,
+                spanWidth: $0.spanWidth,
+                attributedText: $0.attributedText,
+                ctLine: $0.ctLine,
+                ascent: $0.ascent,
+                descent: $0.descent,
+                leading: $0.leading,
+                plainText: $0.plainText
+            )
         }
 
         return RenderPlan(
             textRect: textRect,
-            rowHeight: rowHeight,
+            rowHeight: layout.rowHeight,
             obstacles: obstacles,
             fragments: fragments,
-            splitRowIndices: splitRowIndices,
-            rowCount: rowIndex
+            splitRowIndices: layout.splitRowIndices,
+            rowCount: layout.rowCount
         )
     }
 
@@ -416,20 +366,6 @@ public final class PreparedTextObstacleDemoView: UIView {
             whiteSpaceMode: configuration.whiteSpaceMode,
             localeIdentifier: Locale.current.identifier
         )
-    }
-
-    private func lineConsumesHardBreak(_ line: LineResult, in prepared: PreparedText) -> Bool {
-        guard line.paintEnd < line.end else {
-            return false
-        }
-
-        let trailingText = textSystem.attributedText(
-            prepared,
-            from: line.paintEnd,
-            to: line.end,
-            flatteningHardBreaks: false
-        )
-        return trailingText.string.rangeOfCharacter(from: .newlines) != nil
     }
 
     private func resolvedObstacles(in textRect: CGRect) -> [VisualObstacle] {
@@ -607,79 +543,6 @@ public final class PreparedTextObstacleDemoView: UIView {
         let x = safeRect.midX + sin(t * 0.82) * safeRect.width * 0.42 + cos(t * 1.67) * safeRect.width * 0.08
         let y = safeRect.midY + cos(t * 0.71) * safeRect.height * 0.32 + sin(t * 1.19) * safeRect.height * 0.14
         return PreparedTextObstacleCircle(center: CGPoint(x: x, y: y), radius: radius)
-    }
-
-    private func availableSpans(in bandRect: CGRect, textRect: CGRect, obstacles: [VisualObstacle]) -> [HorizontalSpan] {
-        guard bandRect.width > 0 else {
-            return []
-        }
-
-        let intervals = mergedExclusionIntervals(in: bandRect, textRect: textRect, obstacles: obstacles)
-        if intervals.isEmpty {
-            return [HorizontalSpan(minX: textRect.minX, maxX: textRect.maxX)]
-        }
-
-        var spans: [HorizontalSpan] = []
-        var currentMinX = textRect.minX
-
-        for interval in intervals {
-            if interval.minX - currentMinX >= configuration.minimumSpanWidth {
-                spans.append(HorizontalSpan(minX: currentMinX, maxX: interval.minX))
-            }
-            currentMinX = max(currentMinX, interval.maxX)
-        }
-
-        if textRect.maxX - currentMinX >= configuration.minimumSpanWidth {
-            spans.append(HorizontalSpan(minX: currentMinX, maxX: textRect.maxX))
-        }
-
-        return spans
-    }
-
-    private func mergedExclusionIntervals(in bandRect: CGRect, textRect: CGRect, obstacles: [VisualObstacle]) -> [HorizontalSpan] {
-        let midY = bandRect.midY
-        var intervals: [HorizontalSpan] = []
-
-        for obstacle in obstacles {
-            let layoutRadius = obstacle.circle.radius + configuration.obstaclePadding
-            let distanceY = abs(midY - obstacle.circle.center.y)
-            guard distanceY < layoutRadius else {
-                continue
-            }
-
-            let deltaX = sqrt(max((layoutRadius * layoutRadius) - (distanceY * distanceY), 0))
-            let minX = max(textRect.minX, obstacle.circle.center.x - deltaX)
-            let maxX = min(textRect.maxX, obstacle.circle.center.x + deltaX)
-            guard maxX - minX > 0 else {
-                continue
-            }
-            intervals.append(HorizontalSpan(minX: minX, maxX: maxX))
-        }
-
-        let sorted = intervals.sorted { lhs, rhs in
-            if lhs.minX == rhs.minX {
-                return lhs.maxX < rhs.maxX
-            }
-            return lhs.minX < rhs.minX
-        }
-
-        var merged: [HorizontalSpan] = []
-        for interval in sorted {
-            guard var last = merged.popLast() else {
-                merged.append(interval)
-                continue
-            }
-
-            if interval.minX <= last.maxX + 4 {
-                last.maxX = max(last.maxX, interval.maxX)
-                merged.append(last)
-            } else {
-                merged.append(last)
-                merged.append(interval)
-            }
-        }
-
-        return merged
     }
 
     private func drawSurfaceChrome(in bounds: CGRect) {
@@ -867,15 +730,6 @@ private struct PreparationFingerprint: Equatable {
             lhs.whiteSpaceMode == rhs.whiteSpaceMode &&
             lhs.localeIdentifier == rhs.localeIdentifier &&
             lhs.attributedText.isEqual(to: rhs.attributedText)
-    }
-}
-
-private struct HorizontalSpan: Hashable {
-    var minX: CGFloat
-    var maxX: CGFloat
-
-    var width: CGFloat {
-        max(maxX - minX, 0)
     }
 }
 

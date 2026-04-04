@@ -216,24 +216,28 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(view.configuration.measurementOptions, measurementOptions)
     }
 
+    func testPreparedLabelViewPreparedAcceptsLayoutOptions() {
+        let layoutOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 2,
+            lineBreakMode: .truncateMiddle,
+            alignment: .center,
+            layoutDirection: .rightToLeft
+        )
+        let view = PreparedLabelView().prepared(
+            attributedText: text("PreparedLabelView should accept promoted layout options directly."),
+            sourceID: PreparedTextSourceID("ios-layout-options"),
+            maxLayoutWidth: 160,
+            layoutOptions: layoutOptions
+        )
+
+        XCTAssertEqual(view.configuration.layoutOptions, layoutOptions)
+        XCTAssertEqual(view.configuration.numberOfLines, 2)
+        XCTAssertEqual(view.configuration.lineBreakMode, .byTruncatingMiddle)
+        XCTAssertEqual(view.configuration.textAlignment, .center)
+    }
+
     func testPreparedTextViewSugarFromStringCompilesAndRenders() {
         let view: PreparedTextView = "Hello prepared string".prepared(numberOfLines: 2)
-        let host = UIHostingController(rootView: view)
-        host.loadViewIfNeeded()
-
-        XCTAssertNotNil(host.view)
-    }
-
-    func testPreparedTextViewSugarFromAttributedStringCompilesAndRenders() {
-        let view: PreparedTextView = AttributedString("Hello prepared attributed string").prepared(numberOfLines: 2)
-        let host = UIHostingController(rootView: view)
-        host.loadViewIfNeeded()
-
-        XCTAssertNotNil(host.view)
-    }
-
-    func testPreparedTextViewSugarFromNSAttributedStringCompilesAndRenders() {
-        let view: PreparedTextView = NSAttributedString(string: "Hello prepared NSAttributedString").prepared(numberOfLines: 2)
         let host = UIHostingController(rootView: view)
         host.loadViewIfNeeded()
 
@@ -251,6 +255,67 @@ final class PreparedTextUIKitTests: XCTestCase {
         )
 
         XCTAssertEqual(view.measurementOptions, measurementOptions)
+    }
+
+    func testPreparedTextViewStoresLayoutOptions() {
+        let layoutOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 1,
+            lineBreakMode: .truncateMiddle,
+            alignment: .trailing,
+            layoutDirection: .rightToLeft
+        )
+        let view = PreparedTextView(
+            attributedText: NSAttributedString(string: "Hello prepared view"),
+            layoutOptions: layoutOptions
+        )
+
+        XCTAssertEqual(view.layoutOptions, layoutOptions)
+        XCTAssertEqual(view.numberOfLines, 1)
+        XCTAssertEqual(view.lineBreakMode, .byTruncatingMiddle)
+    }
+
+    func testPreparedLabelViewPreservesAbsoluteTextAlignment() {
+        let view = PreparedLabelView()
+        view.textAlignment = .right
+
+        XCTAssertEqual(view.layoutOptions.alignment, .right)
+        XCTAssertEqual(view.textAlignment, .right)
+
+        view.textAlignment = .left
+
+        XCTAssertEqual(view.layoutOptions.alignment, .left)
+        XCTAssertEqual(view.textAlignment, .left)
+    }
+
+    func testPreparedTextViewPreservesAbsoluteTextAlignment() {
+        var view = PreparedTextView(
+            attributedText: NSAttributedString(string: "Hello prepared view"),
+            textAlignment: .right
+        )
+
+        XCTAssertEqual(view.layoutOptions.alignment, .right)
+        XCTAssertEqual(view.textAlignment, .right)
+
+        view.textAlignment = .left
+
+        XCTAssertEqual(view.layoutOptions.alignment, .left)
+        XCTAssertEqual(view.textAlignment, .left)
+    }
+
+    func testPreparedTextViewSugarFromAttributedStringCompilesAndRenders() {
+        let view: PreparedTextView = AttributedString("Hello prepared attributed string").prepared(numberOfLines: 2)
+        let host = UIHostingController(rootView: view)
+        host.loadViewIfNeeded()
+
+        XCTAssertNotNil(host.view)
+    }
+
+    func testPreparedTextViewSugarFromNSAttributedStringCompilesAndRenders() {
+        let view: PreparedTextView = NSAttributedString(string: "Hello prepared NSAttributedString").prepared(numberOfLines: 2)
+        let host = UIHostingController(rootView: view)
+        host.loadViewIfNeeded()
+
+        XCTAssertNotNil(host.view)
     }
 
     func testExperimentalTextPreparedFromStringCompilesAndRenders() {
@@ -432,6 +497,32 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(activatedURL, url)
     }
 
+    func testPreparedLabelViewSourceCoordinateMapReflectsTruncatedDisplay() {
+        let view = PreparedLabelView()
+        view.apply(
+            configuration: PreparedLabelConfiguration(
+                attributedText: text("Alpha Beta Gamma Delta Epsilon"),
+                sourceID: PreparedTextSourceID("ios-source-coordinate-map"),
+                whiteSpaceMode: .uikitLiteral,
+                maxLayoutWidth: 100,
+                layoutOptions: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateMiddle,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+        )
+
+        let size = view.sizeThatFits(CGSize(width: 100, height: CGFloat.greatestFiniteMagnitude))
+        view.frame = CGRect(x: 0, y: 0, width: 100, height: size.height)
+
+        let map = view.sourceCoordinateMap()
+        XCTAssertEqual(map?.lines.count, 1)
+        XCTAssertEqual(map?.lines.first?.sourceSpans.count, 3)
+        XCTAssertTrue(map?.lines.first?.isTruncated ?? false)
+    }
+
     func testPreparedLabelViewKeepsOnlyVisibleLinksForAccessibilityWhenClippedAtHardBreak() {
         let visibleURL = URL(string: "https://example.com/visible")!
         let hiddenURL = URL(string: "https://example.com/hidden")!
@@ -593,6 +684,30 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertGreaterThan(snapshot.fragmentCount, 0)
         XCTAssertGreaterThan(snapshot.splitRowCount, 0)
         XCTAssertFalse(snapshot.renderedStrings.joined().isEmpty)
+    }
+
+    func testPreparedTextObstacleLayouterProducesReusablePublicLayoutResult() {
+        let prepared = PreparedTextSystem.shared.prepare(
+            text("Public obstacle layouter should split rows when circles carve exclusion spans into the prepared surface."),
+            sourceID: PreparedTextSourceID("ios-obstacle-layouter")
+        )
+        let layouter = PreparedTextObstacleLayouter(textSystem: .shared)
+        let result = layouter.layout(
+            prepared: prepared,
+            in: CGRect(x: 24, y: 24, width: 272, height: 220),
+            obstacles: [
+                PreparedTextObstacleCircle(center: CGPoint(x: 160, y: 96), radius: 40),
+            ],
+            lineHeight: prepared.defaultLineHeight,
+            obstaclePadding: 12,
+            minimumSpanWidth: 30
+        )
+
+        XCTAssertEqual(result.snapshot.obstacleCount, 1)
+        XCTAssertGreaterThan(result.snapshot.rowCount, 0)
+        XCTAssertGreaterThan(result.snapshot.fragmentCount, 0)
+        XCTAssertGreaterThan(result.snapshot.splitRowCount, 0)
+        XCTAssertFalse(result.snapshot.renderedStrings.joined().isEmpty)
     }
 
     func testObstacleDemoPreservesHardBreakAcrossSplitRows() {

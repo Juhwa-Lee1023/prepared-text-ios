@@ -98,28 +98,42 @@ You can validate a title and body locally with:
 
 ## Pull request body
 
-Use the whylog-style PR body template:
+Use the OSS-style PR body template in `.github/pull_request_template.md`.
+whylog is for commit messages and commit validation here, not for PR bodies.
 
 ```text
-## Why this change exists
+## Summary
 
-Lore-id: 1a2b3c4d5e
-Constraint: Keep the package surface unchanged for library consumers
-Rejected: Leave the policy mismatch in place; it would keep failing bot PR validation
-Directive: Revisit if PR automation starts generating whylog-compatible bodies
-Tested: ./scripts/check-repo-readiness.sh
-Not-tested: End-to-end GitHub Actions rerun from a forked PR
-Confidence: medium
-Scope-risk: low
-Reversibility: clean
+Align the contributor workflow with a conventional open-source PR body format.
+This keeps whylog focused on commits while making PR history easier to scan.
+
+## Changes
+
+- replace the whylog-style PR template with a sectioned OSS template
+- validate required PR sections in the metadata check script
+- update contributor and maintainer docs to match the new workflow
+
+## Testing
+
+- `./scripts/check-pr.sh --title "docs(repo): example" --body-file /tmp/pr-body.md`
+- `./scripts/check-repo-readiness.sh`
+
+## Risks and follow-ups
+
+- None.
+
+## Related issues
+
+- Refs #123
 ```
 
-Keep the entries short and concrete:
+Keep the sections concrete and reviewable:
 
-- `Lore-id` is a stable lowercase hexadecimal identifier
-- `Constraint`, `Rejected`, and `Directive` capture the decision context
-- `Tested` and `Not-tested` must explain what you verified locally and what still needs review
-- `Confidence`, `Scope-risk`, and `Reversibility` must use the whylog enums
+- `Summary` explains the problem and outcome
+- `Changes` lists the main code, docs, or workflow updates
+- `Testing` records the commands you ran and the high-signal results
+- `Risks and follow-ups` captures rollout concerns, known limitations, or explicit `None.`
+- `Related issues` links the issue or follow-up when one exists
 
 ## Pull request checklist
 
@@ -130,8 +144,8 @@ Before opening a PR:
 - update `CHANGELOG.md` when the change is user-visible
 - keep PR scope narrow and explain what is intentionally out of scope
 - include screenshots or demo links when UI behavior changes
-- record concrete `Tested` and `Not-tested` entries in the PR body
-- use `Directive` to note follow-up work or linked issues when they matter
+- record concrete testing evidence in the `## Testing` section
+- use `## Risks and follow-ups` and `## Related issues` to capture roll-forward work when it matters
 
 ## Filing issues
 

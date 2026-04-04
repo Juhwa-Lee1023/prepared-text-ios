@@ -33,10 +33,14 @@ struct BenchmarkFixture {
     }
 }
 
-struct MeasurementPolicyScenario {
+struct BenchmarkPolicy {
     let name: String
-    let measurementOptions: PreparedTextMeasurementOptions
-    let note: String
+    let env: MeasurementEnv
+
+    init(name: String, env: MeasurementEnv) {
+        self.name = name
+        self.env = env
+    }
 }
 
 struct BenchmarkStats {
@@ -46,35 +50,6 @@ struct BenchmarkStats {
     let p95: Double
     let max: Double
     let mean: Double
-}
-
-struct Stage0WarmSummary {
-    let coldMeasure: Double
-    let warmMeasure: BenchmarkStats
-    let stats: MeasurementStats
-}
-
-struct Stage0SweepSummary {
-    let timing: BenchmarkStats
-    let stats: MeasurementStats
-}
-
-struct Stage1SweepSummary {
-    let warmPrepare: BenchmarkStats
-    let layoutSweep: BenchmarkStats
-    let diagnostics: PreparedTextDiagnosticsSnapshot
-}
-
-struct ListSizingSummary {
-    var totalLines: Int
-    var totalHeight: Double
-    var totalWidth: Double
-}
-
-struct ListSizingScenarioSummary {
-    let timing: BenchmarkStats
-    let diagnostics: PreparedTextDiagnosticsSnapshot
-    let perItemMedian: Double
 }
 
 @inline(never)
@@ -111,233 +86,170 @@ struct PretextBenchmarkCLI {
         let listBatchRepetitions = envInt("PRETEXT_BENCH_LIST_BATCH_REPETITIONS", default: 5, minimum: 1)
 
         let fixtures = makeFixtures()
-        let policies = makeMeasurementPolicies()
         let listItems = makeListItems(count: listItemCount)
+        let policies = makePolicies()
+        let stage1LayoutOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 2,
+            lineBreakMode: .truncateTail,
+            alignment: .natural,
+            layoutDirection: .leftToRight
+        )
 
         var lines: [String] = []
         lines.append("# Benchmark Results")
         lines.append("")
         lines.append("- Date: \(ISO8601DateFormatter().string(from: Date()))")
-        lines.append("- Runtime: host-side SwiftPM CLI on macOS using the prepared-text engine directly")
+        lines.append("- Runtime: host-side SwiftPM CLI on macOS (CoreText-only benchmark path)")
         lines.append("- Sample iterations: \(iterations)")
         lines.append("- Width sweep repetitions: \(sweepRepetitions)")
         lines.append("- List-style items: \(listItemCount)")
         lines.append("- List batch repetitions: \(listBatchRepetitions)")
-        lines.append("")
-        lines.append("## Phase 1 Policy Scenarios")
-        lines.append("")
-        lines.append("- `exact`: exact pixel-width identity, no line-break alignment")
-        lines.append("- `bucketed-4pt`: widths are conservatively floored into 4pt buckets before caching")
-        lines.append("- `bucketed-4pt-aligned`: widths are first aligned to display scale, then bucketed")
-        lines.append("")
-        lines.append("Fixtures cover Latin body copy, Korean, Japanese/CJK, emoji-heavy copy, pre-wrap content, long unbroken tokens, long scrolling text, and inline attachments.")
-        lines.append("Policy sweeps intentionally use near-identical widths around each fixture's primary width so cache-reuse differences remain measurable.")
+        lines.append("- Width policies: \(policies.map(\.name).joined(separator: ", "))")
+        lines.append("- Corpus: \(fixtures.map(\.name).joined(separator: ", "))")
         lines.append("")
 
-        lines.append("## Stage 0 Warm Measurement")
+        lines.append("## Stage 0 Width Policy Sweep")
         lines.append("")
-        lines.append("| Fixture | Cold p50 | Warm p50 | Warm p95 | Hit Rate | Entries | Cost |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Fixture | Policy | Sweep Median | Sweep p95 | Hit Rate | Misses | Cache Cost |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
 
         for fixture in fixtures {
-            let summary = runStage0WarmSummary(
-                fixture: fixture,
-                iterations: iterations
-            )
-            lines.append(
-                "| \(fixture.name) | \(format(summary.coldMeasure)) | \(format(summary.warmMeasure.median)) | \(format(summary.warmMeasure.p95)) | \(formatPercent(summary.stats.hitRate)) | \(summary.stats.currentEntryCount) | \(summary.stats.currentCost) |"
-            )
+            for policy in policies {
+                let measurer = CachedFramesetterTextMeasurer()
+                let widths = jitteredWidths(from: fixture.sweepWidths)
+                _ = sweepMeasurements(
+                    sampleCount: 1,
+                    widths: widths,
+                    repetitionsPerSample: 1
+                ) {
+                    for width in widths {
+                        let size = measurer.measure(
+                            fixture.text,
+                            sourceID: PreparedTextSourceID("bench-stage0-\(fixture.name)-\(policy.name)"),
+                            width: width,
+                            env: policy.env
+                        )
+                        consume(size)
+                    }
+                }
+                let sweep = sweepMeasurements(
+                    sampleCount: iterations,
+                    widths: widths,
+                    repetitionsPerSample: sweepRepetitions
+                ) {
+                    for width in widths {
+                        let size = measurer.measure(
+                            fixture.text,
+                            sourceID: PreparedTextSourceID("bench-stage0-\(fixture.name)-\(policy.name)"),
+                            width: width,
+                            env: policy.env
+                        )
+                        consume(size)
+                    }
+                }
+                let snapshot = measurer.stats
+                lines.append(
+                    "| \(fixture.name) | \(policy.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(percent(snapshot.hitRate)) | \(snapshot.missCount) | \(snapshot.currentCost) |"
+                )
+            }
         }
 
         lines.append("")
-        lines.append("## Stage 0 Repeated-Width Jitter Sweep")
+        lines.append("## Stage 1 Display Layout Reuse")
         lines.append("")
-        lines.append("| Fixture | Policy | Sweep p50 | Sweep p95 | Hit Rate | Evictions | Entries | Cost |")
+        lines.append("| Fixture | Policy | Sweep Median | Sweep p95 | Layout Cache Hit Rate | Reuse Count | Cache Cost | Avg Lines |")
         lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
 
         for fixture in fixtures {
             for policy in policies {
-                let summary = runStage0SweepSummary(
-                    fixture: fixture,
-                    policy: policy,
-                    iterations: iterations,
-                    sweepRepetitions: sweepRepetitions
+                let engine = DefaultPreparedTextEngine()
+                let prepared = engine.prepare(
+                    fixture.text,
+                    sourceID: PreparedTextSourceID("bench-stage1-\(fixture.name)-\(policy.name)"),
+                    options: fixture.options
                 )
+                let widths = jitteredWidths(from: fixture.sweepWidths)
+                _ = sweepMeasurements(
+                    sampleCount: 1,
+                    widths: widths,
+                    repetitionsPerSample: 1
+                ) {
+                    for width in widths {
+                        let packet = engine.displayLayoutPacket(
+                            prepared,
+                            maxWidth: width,
+                            lineHeight: fixture.lineHeight,
+                            containerWidth: width,
+                            env: policy.env,
+                            options: stage1LayoutOptions
+                        )
+                        consume(packet.result.lineCount)
+                        consume(packet.result.height)
+                    }
+                }
+                let sweep = sweepMeasurements(
+                    sampleCount: iterations,
+                    widths: widths,
+                    repetitionsPerSample: sweepRepetitions
+                ) {
+                    for width in widths {
+                        let packet = engine.displayLayoutPacket(
+                            prepared,
+                            maxWidth: width,
+                            lineHeight: fixture.lineHeight,
+                            containerWidth: width,
+                            env: policy.env,
+                            options: stage1LayoutOptions
+                        )
+                        consume(packet.result.lineCount)
+                        consume(packet.result.height)
+                        consume(packet.result.maxPaintWidth)
+                    }
+                }
+                let diagnostics = engine.diagnosticsSnapshot()
                 lines.append(
-                    "| \(fixture.name) | \(policy.name) | \(format(summary.timing.median)) | \(format(summary.timing.p95)) | \(formatPercent(summary.stats.hitRate)) | \(summary.stats.evictionCount) | \(summary.stats.currentEntryCount) | \(summary.stats.currentCost) |"
+                    "| \(fixture.name) | \(policy.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | \(diagnostics.layoutPacketReuseCount) | \(diagnostics.layoutPacketCache.currentCost) | \(format(diagnostics.averageLinesPerLayout)) |"
                 )
             }
         }
 
         lines.append("")
-        lines.append("## Stage 1 Prepared Layout Reuse")
+        lines.append("## List Sizing Batch")
         lines.append("")
-        lines.append("| Fixture | Policy | Warm Prepare p50 | Layout Sweep p50 | Layout Sweep p95 | Layout Hit Rate | Reuse Count | Avg Lines | Cache Cost |")
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
-
-        for fixture in fixtures {
-            for policy in policies {
-                let summary = runStage1SweepSummary(
-                    fixture: fixture,
-                    policy: policy,
-                    iterations: iterations,
-                    sweepRepetitions: sweepRepetitions
-                )
-                lines.append(
-                    "| \(fixture.name) | \(policy.name) | \(format(summary.warmPrepare.median)) | \(format(summary.layoutSweep.median)) | \(format(summary.layoutSweep.p95)) | \(formatPercent(summary.diagnostics.layoutPacketCache.hitRate)) | \(summary.diagnostics.layoutPacketReuseCount) | \(format(summary.diagnostics.averageLinesPerLayout)) | \(summary.diagnostics.layoutPacketCache.currentCost) |"
-                )
-            }
-        }
-
-        lines.append("")
-        lines.append("## List-Style Batch Sizing")
-        lines.append("")
-        lines.append("| Policy | Batch p50 | Batch p95 | Per-Item p50 | Layout Hit Rate | Avg Lines | Notes |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | --- |")
+        lines.append("| Policy | Batch Median | Batch p95 | Per-Item Median | Layout Cache Hit Rate | Notes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
 
         for policy in policies {
-            let summary = runListSizingScenario(
-                items: listItems,
-                policy: policy,
-                iterations: iterations,
-                repetitions: listBatchRepetitions
-            )
+            let engine = DefaultPreparedTextEngine()
+            let batch = batchMeasurements(
+                sampleCount: iterations,
+                repetitionsPerSample: listBatchRepetitions
+            ) {
+                let summary = measureListSizing(
+                    engine: engine,
+                    items: listItems,
+                    env: policy.env,
+                    layoutOptions: stage1LayoutOptions
+                )
+                consume(summary.totalLines)
+                consume(summary.totalHeight)
+                consume(summary.totalWidth)
+            }
+            let diagnostics = engine.diagnosticsSnapshot()
+            let perItemMedian = batch.median / Double(max(listItems.count, 1))
             lines.append(
-                "| \(policy.name) | \(format(summary.timing.median)) | \(format(summary.timing.p95)) | \(format(summary.perItemMedian)) | \(formatPercent(summary.diagnostics.layoutPacketCache.hitRate)) | \(format(summary.diagnostics.averageLinesPerLayout)) | \(policy.note) |"
+                "| \(policy.name) | \(format(batch.median)) | \(format(batch.p95)) | \(format(perItemMedian)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | repeated chat/feed/list corpus with promoted display layout options |"
             )
         }
-
-        lines.append("")
-        lines.append("## Notes")
-        lines.append("")
-        lines.append("- `p50` is the median latency per measured operation in milliseconds.")
-        lines.append("- Cache cost is an internal bounded estimate used for retention and eviction decisions, not a byte-accurate memory report.")
-        lines.append("- `bucketed-*` modes intentionally trade some width precision for better cache reuse on repeated-width self-sizing surfaces.")
-        lines.append("- `bucketed-4pt-aligned` is the most aggressive policy here: it aligns fractional proposals to scale before applying the width bucket.")
 
         print(lines.joined(separator: "\n"))
     }
 }
 
-private func runStage0WarmSummary(
-    fixture: BenchmarkFixture,
-    iterations: Int
-) -> Stage0WarmSummary {
-    let measurer = CachedFramesetterTextMeasurer()
-    let env = MeasurementEnv(
-        scale: 2,
-        contentSizeCategory: "large",
-        localeIdentifier: fixture.options.localeIdentifier
-    )
-    let sourceID = PreparedTextSourceID("bench-stage0-warm-\(fixture.name)")
-
-    let coldMeasure = timeMilliseconds {
-        let size = measurer.measure(fixture.text, sourceID: sourceID, width: fixture.primaryWidth, env: env)
-        consume(size)
-    }
-
-    _ = measurer.measure(fixture.text, sourceID: sourceID, width: fixture.primaryWidth, env: env)
-    let warmMeasure = batchMeasurements(sampleCount: iterations, repetitionsPerSample: 8) {
-        let size = measurer.measure(fixture.text, sourceID: sourceID, width: fixture.primaryWidth, env: env)
-        consume(size)
-    }
-
-    return Stage0WarmSummary(coldMeasure: coldMeasure, warmMeasure: warmMeasure, stats: measurer.stats)
-}
-
-private func runStage0SweepSummary(
-    fixture: BenchmarkFixture,
-    policy: MeasurementPolicyScenario,
-    iterations: Int,
-    sweepRepetitions: Int
-) -> Stage0SweepSummary {
-    let measurer = CachedFramesetterTextMeasurer()
-    let env = MeasurementEnv(
-        scale: 2,
-        contentSizeCategory: "large",
-        localeIdentifier: fixture.options.localeIdentifier,
-        measurementOptions: policy.measurementOptions
-    )
-    let sourceID = PreparedTextSourceID("bench-stage0-sweep-\(fixture.name)-\(policy.name)")
-
-    let timing = batchMeasurements(sampleCount: iterations, repetitionsPerSample: sweepRepetitions) {
-        for width in repeatedWidthJitter(around: fixture.primaryWidth) {
-            let size = measurer.measure(fixture.text, sourceID: sourceID, width: width, env: env)
-            consume(size)
-        }
-    }
-
-    return Stage0SweepSummary(timing: timing, stats: measurer.stats)
-}
-
-private func runStage1SweepSummary(
-    fixture: BenchmarkFixture,
-    policy: MeasurementPolicyScenario,
-    iterations: Int,
-    sweepRepetitions: Int
-) -> Stage1SweepSummary {
-    let engine = DefaultPreparedTextEngine()
-    let sourceID = PreparedTextSourceID("bench-stage1-\(fixture.name)-\(policy.name)")
-    let env = MeasurementEnv(
-        scale: 2,
-        contentSizeCategory: "large",
-        localeIdentifier: fixture.options.localeIdentifier,
-        measurementOptions: policy.measurementOptions
-    )
-
-    _ = engine.prepare(fixture.text, sourceID: sourceID, options: fixture.options)
-    let warmPrepare = batchMeasurements(sampleCount: iterations, repetitionsPerSample: 8) {
-        let prepared = engine.prepare(fixture.text, sourceID: sourceID, options: fixture.options)
-        consume(prepared.defaultLineHeight)
-    }
-
-    let prepared = engine.prepare(fixture.text, sourceID: sourceID, options: fixture.options)
-    let layoutSweep = batchMeasurements(sampleCount: iterations, repetitionsPerSample: sweepRepetitions) {
-        for width in repeatedWidthJitter(around: fixture.primaryWidth) {
-            let packet = engine.layoutPacket(
-                prepared,
-                maxWidth: width,
-                lineHeight: fixture.lineHeight,
-                env: env
-            )
-            consume(packet.result.lineCount)
-            consume(packet.result.height)
-            consume(packet.result.maxPaintWidth)
-        }
-    }
-
-    return Stage1SweepSummary(
-        warmPrepare: warmPrepare,
-        layoutSweep: layoutSweep,
-        diagnostics: engine.diagnosticsSnapshot()
-    )
-}
-
-private func runListSizingScenario(
-    items: [BenchmarkFixture],
-    policy: MeasurementPolicyScenario,
-    iterations: Int,
-    repetitions: Int
-) -> ListSizingScenarioSummary {
-    let engine = DefaultPreparedTextEngine()
-    let env = MeasurementEnv(
-        scale: 2,
-        contentSizeCategory: "large",
-        measurementOptions: policy.measurementOptions
-    )
-
-    let timing = batchMeasurements(sampleCount: iterations, repetitionsPerSample: repetitions) {
-        let summary = measureListSizing(engine: engine, items: items, env: env)
-        consume(summary.totalLines)
-        consume(summary.totalHeight)
-        consume(summary.totalWidth)
-    }
-
-    return ListSizingScenarioSummary(
-        timing: timing,
-        diagnostics: engine.diagnosticsSnapshot(),
-        perItemMedian: timing.median / Double(max(items.count, 1))
-    )
+struct ListSizingSummary {
+    var totalLines: Int
+    var totalHeight: Double
+    var totalWidth: Double
 }
 
 private func batchMeasurements(
@@ -367,6 +279,19 @@ private func batchMeasurements(
     }
 
     return stats(for: samples)
+}
+
+private func sweepMeasurements(
+    sampleCount: Int,
+    widths _: [CGFloat],
+    repetitionsPerSample: Int,
+    block: () -> Void
+) -> BenchmarkStats {
+    batchMeasurements(
+        sampleCount: sampleCount,
+        repetitionsPerSample: repetitionsPerSample,
+        block: block
+    )
 }
 
 private func timeMilliseconds(_ block: () -> Void) -> Double {
@@ -417,7 +342,7 @@ private func format(_ value: Double) -> String {
     String(format: "%.3f", value)
 }
 
-private func formatPercent(_ value: Double) -> String {
+private func percent(_ value: Double) -> String {
     String(format: "%.1f%%", value * 100)
 }
 
@@ -430,70 +355,84 @@ private func envInt(_ name: String, default defaultValue: Int, minimum: Int) -> 
 }
 
 private func measureListSizing(
-    engine: PreparedTextEngine,
+    engine: DefaultPreparedTextEngine,
     items: [BenchmarkFixture],
-    env: MeasurementEnv
+    env: MeasurementEnv,
+    layoutOptions: PreparedTextLayoutOptions
 ) -> ListSizingSummary {
     var totalLines = 0
     var totalHeight = 0.0
     var totalWidth = 0.0
 
     for item in items {
-        let prepared = engine.prepare(
-            item.text,
-            sourceID: PreparedTextSourceID(item.name),
-            options: item.options
-        )
-        let result = engine.layout(
+        let prepared = engine.prepare(item.text, sourceID: PreparedTextSourceID(item.name), options: item.options)
+        let packet = engine.displayLayoutPacket(
             prepared,
             maxWidth: item.primaryWidth,
             lineHeight: item.lineHeight,
-            env: env
+            containerWidth: item.primaryWidth,
+            env: env,
+            options: layoutOptions
         )
-        totalLines += result.lineCount
-        totalHeight += Double(result.height)
-        totalWidth += Double(result.maxPaintWidth)
+        totalLines += packet.result.lineCount
+        totalHeight += Double(packet.result.height)
+        totalWidth += Double(packet.result.maxPaintWidth)
     }
 
     return ListSizingSummary(totalLines: totalLines, totalHeight: totalHeight, totalWidth: totalWidth)
 }
 
-private func makeMeasurementPolicies() -> [MeasurementPolicyScenario] {
+private func makePolicies() -> [BenchmarkPolicy] {
     [
-        MeasurementPolicyScenario(
+        BenchmarkPolicy(
             name: "exact",
-            measurementOptions: .default,
-            note: "Use for width-sensitive surfaces that need strict per-width identity."
+            env: MeasurementEnv(
+                scale: 2,
+                contentSizeCategory: "large",
+                localeIdentifier: Locale(identifier: "en_US").identifier,
+                measurementOptions: PreparedTextMeasurementOptions(
+                    widthNormalizationPolicy: .exactPixels,
+                    pixelMeasurementPolicy: .exact
+                )
+            )
         ),
-        MeasurementPolicyScenario(
+        BenchmarkPolicy(
             name: "bucketed-4pt",
-            measurementOptions: PreparedTextMeasurementOptions(
-                widthNormalizationPolicy: .bucketed(points: 4),
-                pixelMeasurementPolicy: .exact
-            ),
-            note: "Good first opt-in for repeated-width self-sizing loops."
+            env: MeasurementEnv(
+                scale: 2,
+                contentSizeCategory: "large",
+                localeIdentifier: Locale(identifier: "en_US").identifier,
+                measurementOptions: PreparedTextMeasurementOptions(
+                    widthNormalizationPolicy: .bucketed(points: 4),
+                    pixelMeasurementPolicy: .exact
+                )
+            )
         ),
-        MeasurementPolicyScenario(
-            name: "bucketed-4pt-aligned",
-            measurementOptions: PreparedTextMeasurementOptions(
-                widthNormalizationPolicy: .bucketed(points: 4),
-                pixelMeasurementPolicy: .alignedToScale
-            ),
-            note: "Most stable repeated-measurement mode for fractional width churn."
+        BenchmarkPolicy(
+            name: "pixel-aligned",
+            env: MeasurementEnv(
+                scale: 2,
+                contentSizeCategory: "large",
+                localeIdentifier: Locale(identifier: "en_US").identifier,
+                measurementOptions: PreparedTextMeasurementOptions(
+                    widthNormalizationPolicy: .exactPixels,
+                    pixelMeasurementPolicy: .alignedToScale
+                )
+            )
         ),
     ]
 }
 
-private func repeatedWidthJitter(around primaryWidth: CGFloat) -> [CGFloat] {
-    let base = max(primaryWidth, 24)
-    return [
-        max(base - 3.4, 1),
-        max(base - 1.6, 1),
-        max(base - 0.4, 1),
-        base + 0.6,
-        base + 1.8,
-        base + 3.6,
-    ]
+private func jitteredWidths(from widths: [CGFloat]) -> [CGFloat] {
+    widths.flatMap { width in
+        [
+            max(width - 1.1, 24),
+            max(width - 0.35, 24),
+            width,
+            width + 0.4,
+            width + 1.05,
+        ]
+    }
 }
 
 private func makeFixtures() -> [BenchmarkFixture] {
@@ -504,59 +443,58 @@ private func makeFixtures() -> [BenchmarkFixture] {
         NSAttributedString(string: string, attributes: attributes)
     }
 
-    let english = "Prepared text layout should amortize expensive shaping and keep repeated width churn predictable."
-    let korean = "준비된 텍스트 레이아웃은 반복적인 너비 변화에서도 측정과 줄바꿈이 안정적으로 재사용되어야 한다."
-    let japanese = "日本語の段落も幅の変化ごとに無駄なく再計算され、同じ条件では同じレイアウトを再利用したい。"
-    let emoji = "🙂🙂🙂 Emoji-dense reaction summaries should not cause opaque cache churn across slightly changing widths. 🚀✨📦"
-    let prewrap = "Tabs\tstay visible\nand soft hy\u{00AD}phens appear only when selected."
-    let longToken = "supercalifragilisticexpialidocious-supercalifragilisticexpialidocious-supercalifragilisticexpialidocious"
-    let longText = Array(repeating: "Long text sizing should reuse prepared layout work across cards, feeds, and chat transcripts.", count: 14)
-        .joined(separator: " ")
+    func attachmentFixtureText() -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.bounds = CGRect(x: 0, y: -2, width: 22, height: 14)
+        let attributed = NSMutableAttributedString(string: "Inline ", attributes: attributes)
+        attributed.append(NSAttributedString(attachment: attachment))
+        attributed.append(NSAttributedString(string: " attachment sizing should participate in prepared layout reuse.", attributes: attributes))
+        return attributed
+    }
 
-    var fixtures = [
+    let englishBody = "Prepared layout reuse should keep self-sizing surfaces stable across repeated width negotiation."
+    let korean = "준비된 텍스트 레이아웃은 반복되는 width negotiation 중에도 self-sizing 높이와 줄바꿈을 안정적으로 유지해야 한다."
+    let emoji = "🙂🙂🙂 Emoji-heavy message cards should still reuse width-adjacent layouts instead of thrashing line breaks."
+    let longToken = "https://prepared-layout-benchmarks.example.com/very/long/unbroken/token/with-query?cache=deterministic-and-reused"
+    let longText = Array(
+        repeating: "Long text sizing should amortize prepare work across width churn and keep list rows predictable.",
+        count: 12
+    ).joined(separator: " ")
+
+    return [
         BenchmarkFixture(
-            name: "body-english",
-            text: text(english),
+            name: "latin-body",
+            text: text(englishBody),
             primaryWidth: 240,
-            sweepWidths: [160, 200, 240, 280, 320, 400],
+            sweepWidths: [180, 220, 240, 280, 320],
             lineHeight: 20
         ),
         BenchmarkFixture(
-            name: "korean-body",
+            name: "korean-cjk",
             text: text(korean),
             primaryWidth: 220,
-            sweepWidths: [156, 188, 220, 252, 284, 316],
-            options: PreparedTextOptions(locale: Locale(identifier: "ko_KR")),
-            lineHeight: 20
-        ),
-        BenchmarkFixture(
-            name: "japanese-body",
-            text: text(japanese),
-            primaryWidth: 220,
-            sweepWidths: [148, 184, 220, 256, 292],
-            options: PreparedTextOptions(locale: Locale(identifier: "ja_JP")),
+            sweepWidths: [160, 200, 220, 260, 300],
             lineHeight: 20
         ),
         BenchmarkFixture(
             name: "emoji-heavy",
             text: text(emoji),
-            primaryWidth: 230,
-            sweepWidths: [168, 198, 230, 262, 294],
-            lineHeight: 20
-        ),
-        BenchmarkFixture(
-            name: "prewrap",
-            text: text(prewrap),
-            primaryWidth: 220,
-            sweepWidths: [160, 192, 220, 252, 284, 320],
-            options: PreparedTextOptions(whiteSpaceMode: .preWrap),
+            primaryWidth: 240,
+            sweepWidths: [180, 220, 240, 280, 320],
             lineHeight: 20
         ),
         BenchmarkFixture(
             name: "long-token",
             text: text(longToken),
-            primaryWidth: 210,
-            sweepWidths: [140, 172, 210, 242, 274],
+            primaryWidth: 260,
+            sweepWidths: [180, 220, 260, 300, 360],
+            lineHeight: 20
+        ),
+        BenchmarkFixture(
+            name: "attachment-inline",
+            text: attachmentFixtureText(),
+            primaryWidth: 240,
+            sweepWidths: [180, 220, 240, 280, 320],
             lineHeight: 20
         ),
         BenchmarkFixture(
@@ -567,40 +505,6 @@ private func makeFixtures() -> [BenchmarkFixture] {
             lineHeight: 20
         ),
     ]
-
-    if let attachmentFixture = makeAttachmentFixture(font: font) {
-        fixtures.append(attachmentFixture)
-    }
-
-    return fixtures
-}
-
-private func makeAttachmentFixture(font: CTFont) -> BenchmarkFixture? {
-    #if canImport(UIKit) || canImport(AppKit)
-    let attributes: [NSAttributedString.Key: Any] = [kCTFontAttributeName as NSAttributedString.Key: font]
-    let attachment = NSTextAttachment()
-    attachment.bounds = CGRect(x: 0, y: -2, width: 18, height: 14)
-
-    let mutable = NSMutableAttributedString(
-        string: "Inline attachment \u{FFFC} should still participate in width-sensitive cache identity.",
-        attributes: attributes
-    )
-    let attachmentRange = (mutable.string as NSString).range(of: "\u{FFFC}")
-    if attachmentRange.location != NSNotFound {
-        mutable.addAttribute(.attachment, value: attachment, range: attachmentRange)
-    }
-
-    return BenchmarkFixture(
-        name: "attachment-inline",
-        text: mutable,
-        primaryWidth: 240,
-        sweepWidths: [164, 196, 240, 276, 308],
-        lineHeight: 20
-    )
-    #else
-    _ = font
-    return nil
-    #endif
 }
 
 private func makeListItems(count: Int) -> [BenchmarkFixture] {

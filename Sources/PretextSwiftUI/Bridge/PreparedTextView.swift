@@ -22,12 +22,25 @@ public struct PreparedTextView: UIViewRepresentable {
     public var lineHeightOverride: CGFloat?
     public var measurementOptions: PreparedTextMeasurementOptions
     public var maxLayoutWidth: CGFloat?
-    public var numberOfLines: Int
-    public var lineBreakMode: NSLineBreakMode
-    public var textAlignment: NSTextAlignment?
+    public var layoutOptions: PreparedTextLayoutOptions
     public var automaticallyOpensLinks: Bool
     public var linkTapHandler: ((URL) -> Void)?
     public var layoutBehavior: PreparedTextLayoutBehavior
+
+    public var numberOfLines: Int {
+        get { layoutOptions.maximumNumberOfLines }
+        set { layoutOptions.maximumNumberOfLines = max(newValue, 0) }
+    }
+
+    public var lineBreakMode: NSLineBreakMode {
+        get { layoutOptions.lineBreakMode.nsLineBreakMode }
+        set { layoutOptions.lineBreakMode = PreparedTextLineBreakMode(newValue) }
+    }
+
+    public var textAlignment: NSTextAlignment? {
+        get { layoutOptions.alignment.nsTextAlignment }
+        set { layoutOptions.alignment = PreparedTextHorizontalAlignment(newValue) }
+    }
 
     public init(
         attributedText: NSAttributedString,
@@ -36,6 +49,7 @@ public struct PreparedTextView: UIViewRepresentable {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -50,9 +64,12 @@ public struct PreparedTextView: UIViewRepresentable {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -64,6 +81,7 @@ public struct PreparedTextView: UIViewRepresentable {
         lineHeightOverride: CGFloat? = nil,
         measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment? = nil,
@@ -78,9 +96,12 @@ public struct PreparedTextView: UIViewRepresentable {
         self.lineHeightOverride = lineHeightOverride
         self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
-        self.numberOfLines = max(numberOfLines, 0)
-        self.lineBreakMode = lineBreakMode
-        self.textAlignment = textAlignment
+        self.layoutOptions = layoutOptions ?? PreparedTextLayoutOptions(
+            maximumNumberOfLines: numberOfLines,
+            lineBreakMode: PreparedTextLineBreakMode(lineBreakMode),
+            alignment: PreparedTextHorizontalAlignment(textAlignment),
+            layoutDirection: .natural
+        )
         self.automaticallyOpensLinks = automaticallyOpensLinks
         self.linkTapHandler = linkTapHandler
         self.layoutBehavior = layoutBehavior
@@ -102,9 +123,7 @@ public struct PreparedTextView: UIViewRepresentable {
                 lineHeightOverride: lineHeightOverride,
                 measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
-                numberOfLines: numberOfLines,
-                lineBreakMode: lineBreakMode,
-                textAlignment: textAlignment,
+                layoutOptions: layoutOptions,
                 automaticallyOpensLinks: automaticallyOpensLinks,
                 linkTapHandler: linkTapHandler
             )
@@ -123,6 +142,78 @@ public struct PreparedTextView: UIViewRepresentable {
             return measured
         case .fillProposal:
             return CGSize(width: width, height: measured.height)
+        }
+    }
+}
+
+extension PreparedTextLineBreakMode {
+    init(_ value: NSLineBreakMode) {
+        switch value {
+        case .byWordWrapping:
+            self = .wordWrap
+        case .byCharWrapping:
+            self = .characterWrap
+        case .byClipping:
+            self = .clip
+        case .byTruncatingHead:
+            self = .truncateHead
+        case .byTruncatingMiddle:
+            self = .truncateMiddle
+        case .byTruncatingTail:
+            self = .truncateTail
+        @unknown default:
+            self = .truncateTail
+        }
+    }
+
+    var nsLineBreakMode: NSLineBreakMode {
+        switch self {
+        case .wordWrap:
+            return .byWordWrapping
+        case .characterWrap:
+            return .byCharWrapping
+        case .clip:
+            return .byClipping
+        case .truncateHead:
+            return .byTruncatingHead
+        case .truncateMiddle:
+            return .byTruncatingMiddle
+        case .truncateTail:
+            return .byTruncatingTail
+        }
+    }
+}
+
+extension PreparedTextHorizontalAlignment {
+    init(_ value: NSTextAlignment?) {
+        switch value ?? .natural {
+        case .center:
+            self = .center
+        case .right:
+            self = .right
+        case .left:
+            self = .left
+        case .natural, .justified:
+            self = .natural
+        @unknown default:
+            self = .natural
+        }
+    }
+
+    var nsTextAlignment: NSTextAlignment? {
+        switch self {
+        case .natural:
+            return nil
+        case .left:
+            return .left
+        case .leading:
+            return .left
+        case .center:
+            return .center
+        case .trailing:
+            return .right
+        case .right:
+            return .right
         }
     }
 }
