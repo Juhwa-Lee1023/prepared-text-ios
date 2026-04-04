@@ -1,6 +1,7 @@
 # Validation
 
 prepared-text-ios ships two validation paths and one Apple-platform verification path.
+Phase 1 also expects the benchmark runner to be part of release discipline because cache reuse and repeated-width behavior are now part of the public performance story.
 
 ## Host report
 
@@ -93,6 +94,7 @@ swift build
 swift test
 swift run PretextValidation --mode report
 swift run PretextValidation --mode gate
+swift run PretextBenchmarks
 ./scripts/run-ios-demo-tests.sh
 ```
 
@@ -101,3 +103,10 @@ Or use the combined helper:
 ```bash
 ./scripts/run-release-checks.sh
 ```
+
+Review the validation output together with the benchmark report. A clean release candidate should show:
+
+- no stable-corpus gate regressions
+- plausible repeated-width cache hit rates
+- no obvious eviction explosions
+- no suspicious attachment or CJK-only performance cliffs in the benchmark output

@@ -9,6 +9,7 @@ public struct PreparedLabelConfiguration {
     public var sourceID: PreparedTextSourceID?
     public var whiteSpaceMode: WhiteSpaceMode
     public var lineHeightOverride: CGFloat?
+    public var measurementOptions: PreparedTextMeasurementOptions
     public var maxLayoutWidth: CGFloat?
     public var numberOfLines: Int
     public var lineBreakMode: NSLineBreakMode
@@ -22,6 +23,7 @@ public struct PreparedLabelConfiguration {
         sourceID: PreparedTextSourceID? = nil,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -34,6 +36,7 @@ public struct PreparedLabelConfiguration {
         self.sourceID = sourceID
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -355,7 +358,7 @@ public final class PreparedLabelView: UIView {
             return nil
         }
         let lineHeight = configuration.lineHeightOverride ?? prepared.defaultLineHeight
-        return textSystem.layoutPacket(prepared, maxWidth: width, lineHeight: lineHeight)
+        return textSystem.layoutPacket(prepared, maxWidth: width, lineHeight: lineHeight, env: measurementEnv())
     }
 
     private func resolvedDisplayPacket(layoutWidth: CGFloat, containerWidth: CGFloat) -> PreparedDisplayPacket? {
@@ -819,6 +822,15 @@ public final class PreparedLabelView: UIView {
         setNeedsLayout()
     }
 
+    private func measurementEnv() -> MeasurementEnv {
+        MeasurementEnv(
+            scale: Double(window?.screen.scale ?? traitCollection.displayScale),
+            contentSizeCategory: traitCollection.preferredContentSizeCategory.rawValue,
+            localeIdentifier: Locale.current.identifier,
+            measurementOptions: configuration.measurementOptions
+        )
+    }
+
     private func updateAccessibilityMetadata() {
         accessibilityLabel = resolvedInputText()?.string
         accessibilityValue = nil
@@ -904,6 +916,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
     var sourceID: PreparedTextSourceID?
     var whiteSpaceMode: WhiteSpaceMode
     var lineHeightOverride: CGFloat?
+    var measurementOptions: PreparedTextMeasurementOptions
     var maxLayoutWidth: CGFloat?
     var numberOfLines: Int
     var lineBreakMode: NSLineBreakMode
@@ -915,6 +928,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
         sourceID = configuration.sourceID
         whiteSpaceMode = configuration.whiteSpaceMode
         lineHeightOverride = configuration.lineHeightOverride
+        measurementOptions = configuration.measurementOptions
         maxLayoutWidth = configuration.maxLayoutWidth
         numberOfLines = configuration.numberOfLines
         lineBreakMode = configuration.lineBreakMode
@@ -927,6 +941,7 @@ private struct PreparedLabelLayoutSnapshot: Equatable {
             lhs.sourceID == rhs.sourceID &&
             lhs.whiteSpaceMode == rhs.whiteSpaceMode &&
             lhs.lineHeightOverride == rhs.lineHeightOverride &&
+            lhs.measurementOptions == rhs.measurementOptions &&
             lhs.maxLayoutWidth == rhs.maxLayoutWidth &&
             lhs.numberOfLines == rhs.numberOfLines &&
             lhs.lineBreakMode == rhs.lineBreakMode &&

@@ -3,6 +3,12 @@ import Foundation
 import XCTest
 @testable import PretextCore
 
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
+
 final class PretextCoreTests: XCTestCase {
     func testCSSNormalCollapsesWhitespace() {
         let engine = DefaultPreparedTextEngine()
@@ -193,6 +199,22 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(measurer.stats.missCount, 1)
     }
 
+    func testStage0CacheHitRefreshesRecencyUnderEvictionPressure() {
+        let measurer = CachedFramesetterTextMeasurer(countLimit: 2, totalCostLimit: .max)
+        let env = MeasurementEnv(scale: 2, contentSizeCategory: "large")
+        let attributed = text("Cache recency should track repeated measurement hits.")
+        let sourceID = PreparedTextSourceID("stage0-recency")
+
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 100, env: env)
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 140, env: env)
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 100, env: env)
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 180, env: env)
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 100, env: env)
+
+        XCTAssertEqual(measurer.stats.hitCount, 2)
+        XCTAssertEqual(measurer.stats.missCount, 3)
+    }
+
     func testStage0SourceIDRejectsStaleContent() {
         let measurer = CachedFramesetterTextMeasurer()
         let env = MeasurementEnv(scale: 2, contentSizeCategory: "large")
@@ -204,6 +226,144 @@ final class PretextCoreTests: XCTestCase {
         let secondSize = measurer.measure(first, sourceID: sourceID, width: 80, env: env)
 
         XCTAssertGreaterThan(secondSize.height, firstSize.height)
+    }
+
+    func testAttributedLayoutSignatureIsDeterministicAndRangeSensitive() {
+        let regular = CTFontCreateWithName("Helvetica" as CFString, 17, nil)
+        let bold = CTFontCreateWithName("Helvetica-Bold" as CFString, 17, nil)
+
+        let first = NSMutableAttributedString(
+            string: "Layout identity should notice attributed ranges.",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: regular]
+        )
+        first.addAttribute(
+            kCTFontAttributeName as NSAttributedString.Key,
+            value: bold,
+            range: NSRange(location: 7, length: 8)
+        )
+
+        let second = NSMutableAttributedString(attributedString: first)
+        let shifted = NSMutableAttributedString(
+            string: first.string,
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: regular]
+        )
+        shifted.addAttribute(
+            kCTFontAttributeName as NSAttributedString.Key,
+            value: bold,
+            range: NSRange(location: 8, length: 8)
+        )
+
+        XCTAssertEqual(first.pretextLayoutSignature(), second.pretextLayoutSignature())
+        XCTAssertNotEqual(first.pretextLayoutSignature(), shifted.pretextLayoutSignature())
+    }
+
+    func testAttachmentMetricsParticipateInLayoutIdentity() {
+        let first = attachmentText(width: 18, height: 12)
+        let second = attachmentText(width: 32, height: 12)
+
+        let firstSignature = first.pretextLayoutSignature()
+        let secondSignature = second.pretextLayoutSignature()
+
+        XCTAssertEqual(firstSignature.attachmentCount, 1)
+        XCTAssertEqual(secondSignature.attachmentCount, 1)
+        XCTAssertNotEqual(firstSignature, secondSignature)
+    }
+
+    func testWidthNormalizationPolicyCanBucketNearbyWidths() {
+        let exact = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .exactPixels,
+                pixelMeasurementPolicy: .exact
+            )
+        )
+        let bucketed = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .bucketed(points: 4),
+                pixelMeasurementPolicy: .exact
+            )
+        )
+
+        XCTAssertNotEqual(exact.normalizedWidth(101.1), exact.normalizedWidth(103.9))
+        XCTAssertEqual(bucketed.resolvedMeasurementWidth(101.1), 100, accuracy: 0.001)
+        XCTAssertEqual(bucketed.resolvedMeasurementWidth(103.9), 100, accuracy: 0.001)
+        XCTAssertEqual(bucketed.normalizedWidth(101.1), bucketed.normalizedWidth(103.9))
+    }
+
+    func testStage0BucketedWidthPolicyImprovesCacheReuseAcrossNearbyWidths() {
+        let exactMeasurer = CachedFramesetterTextMeasurer()
+        let bucketedMeasurer = CachedFramesetterTextMeasurer()
+        let attributed = text("Repeated widths should avoid needless cache churn.")
+        let sourceID = PreparedTextSourceID("stage0-bucketed-widths")
+
+        let exactEnv = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .exactPixels,
+                pixelMeasurementPolicy: .exact
+            )
+        )
+        let bucketedEnv = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .bucketed(points: 4),
+                pixelMeasurementPolicy: .exact
+            )
+        )
+
+        _ = exactMeasurer.measure(attributed, sourceID: sourceID, width: 101.1, env: exactEnv)
+        _ = exactMeasurer.measure(attributed, sourceID: sourceID, width: 103.9, env: exactEnv)
+
+        _ = bucketedMeasurer.measure(attributed, sourceID: sourceID, width: 101.1, env: bucketedEnv)
+        _ = bucketedMeasurer.measure(attributed, sourceID: sourceID, width: 103.9, env: bucketedEnv)
+
+        XCTAssertEqual(exactMeasurer.stats.hitCount, 0)
+        XCTAssertEqual(exactMeasurer.stats.missCount, 2)
+        XCTAssertEqual(bucketedMeasurer.stats.hitCount, 1)
+        XCTAssertEqual(bucketedMeasurer.stats.missCount, 1)
+    }
+
+    func testPixelAlignedMeasurementRoundsProposalToDisplayScale() {
+        let exact = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .exactPixels,
+                pixelMeasurementPolicy: .exact
+            )
+        )
+        let aligned = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .exactPixels,
+                pixelMeasurementPolicy: .alignedToScale
+            )
+        )
+
+        XCTAssertEqual(exact.resolvedMeasurementWidth(100.24), 100.24, accuracy: 0.0001)
+        XCTAssertEqual(aligned.resolvedMeasurementWidth(100.24), 100.0, accuracy: 0.0001)
+        XCTAssertEqual(aligned.resolvedMeasurementWidth(100.26), 100.5, accuracy: 0.0001)
+    }
+
+    func testPixelAlignedMeasurementParticipatesInCacheIdentity() {
+        let measurer = CachedFramesetterTextMeasurer()
+        let attributed = text("Fractional widths should not collide with aligned widths.")
+        let sourceID = PreparedTextSourceID("stage0-pixel-aligned")
+
+        let exact = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(pixelMeasurementPolicy: .exact)
+        )
+        let aligned = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(pixelMeasurementPolicy: .alignedToScale)
+        )
+
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 100.24, env: exact)
+        _ = measurer.measure(attributed, sourceID: sourceID, width: 100.24, env: aligned)
+
+        XCTAssertEqual(measurer.stats.hitCount, 0)
+        XCTAssertEqual(measurer.stats.missCount, 2)
     }
 
     func testLayoutPacketCacheReusePreservesLayout() {
@@ -219,6 +379,53 @@ final class PretextCoreTests: XCTestCase {
 
         XCTAssertEqual(first.result, second.result)
         XCTAssertEqual(first.lines.count, second.lines.count)
+    }
+
+    func testLayoutPacketCacheKeyIncludesPreparedTextOptions() {
+        let engine = DefaultPreparedTextEngine()
+        let sourceID = PreparedTextSourceID("layout-packet-options")
+        let attributed = text("One   two")
+        let literal = engine.prepare(
+            attributed,
+            sourceID: sourceID,
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let cssNormal = engine.prepare(
+            attributed,
+            sourceID: sourceID,
+            options: PreparedTextOptions(whiteSpaceMode: .cssNormal)
+        )
+        let env = MeasurementEnv.default
+
+        let literalKey = LayoutPacketKey(
+            identity: literal.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(96),
+            lineHeightKey: env.cacheScalarKey(literal.defaultLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: literal.storage.options),
+            layoutDirectionPlaceholder: nil,
+            maxLines: nil,
+            truncationModeIdentifier: nil
+        )
+        let cssNormalKey = LayoutPacketKey(
+            identity: cssNormal.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(96),
+            lineHeightKey: env.cacheScalarKey(cssNormal.defaultLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: cssNormal.storage.options),
+            layoutDirectionPlaceholder: nil,
+            maxLines: nil,
+            truncationModeIdentifier: nil
+        )
+
+        XCTAssertNotEqual(literalKey, cssNormalKey)
+
+        _ = engine.layoutPacket(literal, maxWidth: 96, lineHeight: literal.defaultLineHeight, env: env)
+        _ = engine.layoutPacket(cssNormal, maxWidth: 96, lineHeight: cssNormal.defaultLineHeight, env: env)
+
+        let snapshot = engine.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.layoutPacketReuseCount, 0)
+        XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 2)
     }
 
     func testExplicitLineHeightControlsFragmentBlockAdvance() {
@@ -270,6 +477,170 @@ final class PretextCoreTests: XCTestCase {
         )
 
         XCTAssertNotEqual(first.source.string, second.source.string)
+    }
+
+    func testEngineDiagnosticsSnapshotReportsLayoutReuseAndAverageLineCount() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Diagnostics should make cache reuse and observed line counts visible to adopters."),
+            sourceID: PreparedTextSourceID("diagnostics-layout")
+        )
+
+        _ = engine.layoutPacket(prepared, maxWidth: 140, lineHeight: prepared.defaultLineHeight, env: .default)
+        _ = engine.layoutPacket(prepared, maxWidth: 140, lineHeight: prepared.defaultLineHeight, env: .default)
+
+        let snapshot = engine.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.layoutPacketReuseCount, 1)
+        XCTAssertEqual(snapshot.layoutPacketCache.hitCount, 1)
+        XCTAssertGreaterThan(snapshot.layoutPacketCache.currentEntryCount, 0)
+        XCTAssertGreaterThan(snapshot.averageLinesPerLayout, 0)
+    }
+
+    func testPreparedTextEngineDefaultExtensionPreservesLegacyConformance() {
+        let engine = LegacyPreparedTextEngine()
+        let prepared = engine.prepare(text("Legacy engines should keep compiling."), options: PreparedTextOptions())
+        let env = MeasurementEnv(
+            scale: 2,
+            measurementOptions: PreparedTextMeasurementOptions(pixelMeasurementPolicy: .alignedToScale)
+        )
+
+        let defaultLayout = engine.layout(prepared, maxWidth: 120, lineHeight: prepared.defaultLineHeight)
+        let envLayout = engine.layout(prepared, maxWidth: 120, lineHeight: prepared.defaultLineHeight, env: env)
+
+        XCTAssertEqual(defaultLayout, envLayout)
+        XCTAssertEqual(
+            engine.diagnosticsSnapshot(),
+            PreparedTextDiagnosticsSnapshot(
+                measurementCache: MeasurementStats(),
+                preparedTextCache: CacheDiagnosticsSnapshot(),
+                layoutPacketCache: CacheDiagnosticsSnapshot(),
+                segmentMeasurementCache: CacheDiagnosticsSnapshot()
+            )
+        )
+    }
+
+    @MainActor
+    func testPreparedTextSystemDiagnosticsSnapshotTracksPublicCacheStats() {
+        let system = PreparedTextSystem(
+            measurer: CachedFramesetterTextMeasurer(),
+            invalidationCenter: PreparedInvalidationCenter()
+        )
+        let prepared = system.prepare(
+            text("Public diagnostics should expose both measurement and layout reuse."),
+            sourceID: PreparedTextSourceID("system-diagnostics")
+        )
+
+        _ = system.measure(prepared.source, width: 160, env: .default)
+        _ = system.measure(prepared.source, width: 160, env: .default)
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.measurementCache.hitCount, 1)
+        XCTAssertEqual(snapshot.measurementCache.missCount, 1)
+        XCTAssertEqual(snapshot.layoutPacketReuseCount, 1)
+        XCTAssertGreaterThan(snapshot.averageLinesPerLayout, 0)
+    }
+
+    @MainActor
+    func testPreparedInvalidationCenterCanTriggerContentSizeInvalidation() async {
+        let center = PreparedInvalidationCenter()
+        let system = PreparedTextSystem(measurer: CachedFramesetterTextMeasurer(), invalidationCenter: center)
+        let prepared = system.prepare(
+            text("Dynamic type invalidation should be explicit and testable."),
+            sourceID: PreparedTextSourceID("invalidation-content-size")
+        )
+
+        _ = system.layoutPacket(prepared, maxWidth: 150, lineHeight: prepared.defaultLineHeight, env: .default)
+        center.invalidateAll(reason: .contentSizeCategoryChanged)
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.fullInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .contentSizeCategoryChanged)
+        XCTAssertEqual(snapshot.preparedTextCache.currentEntryCount, 0)
+        XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 0)
+    }
+
+    @MainActor
+    func testPreparedInvalidationCenterUsesInjectedNotificationCenter() async {
+        let notificationCenter = NotificationCenter()
+        let center = PreparedInvalidationCenter(notificationCenter: notificationCenter)
+        let system = PreparedTextSystem(measurer: CachedFramesetterTextMeasurer(), invalidationCenter: center)
+        let prepared = system.prepare(
+            text("Injected invalidation centers should still reach the system."),
+            sourceID: PreparedTextSourceID("custom-notification-center")
+        )
+
+        _ = system.layoutPacket(prepared, maxWidth: 150, lineHeight: prepared.defaultLineHeight, env: .default)
+        center.invalidateAll(reason: .contentSizeCategoryChanged)
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.fullInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .contentSizeCategoryChanged)
+        XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 0)
+    }
+
+    @MainActor
+    func testPreparedInvalidationCenterCanTargetSourceIDs() async {
+        let center = PreparedInvalidationCenter()
+        let system = PreparedTextSystem(measurer: CachedFramesetterTextMeasurer(), invalidationCenter: center)
+
+        let first = system.prepare(text("First cached payload"), sourceID: PreparedTextSourceID("targeted-a"))
+        let second = system.prepare(text("Second cached payload"), sourceID: PreparedTextSourceID("targeted-b"))
+
+        _ = system.layoutPacket(first, maxWidth: 140, lineHeight: first.defaultLineHeight, env: .default)
+        _ = system.layoutPacket(second, maxWidth: 140, lineHeight: second.defaultLineHeight, env: .default)
+
+        center.invalidate(sourceIDs: [PreparedTextSourceID("targeted-a")], reason: .attachmentMetricsChanged)
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.targetedInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .attachmentMetricsChanged)
+        XCTAssertEqual(snapshot.preparedTextCache.currentEntryCount, 1)
+        XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 1)
+    }
+
+    @MainActor
+    func testPreparedInvalidationCenterCanTriggerLocaleInvalidation() async {
+        let center = PreparedInvalidationCenter()
+        let system = PreparedTextSystem(measurer: CachedFramesetterTextMeasurer(), invalidationCenter: center)
+        let prepared = system.prepare(
+            text("Locale changes should have an explicit invalidation path."),
+            sourceID: PreparedTextSourceID("locale-invalidation")
+        )
+
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+        center.invalidateAll(reason: .localeChanged)
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.fullInvalidationCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .localeChanged)
+        XCTAssertEqual(snapshot.preparedTextCache.currentEntryCount, 0)
+    }
+
+    @MainActor
+    func testPreparedInvalidationCenterRecordsBackgroundTrimSeparately() async {
+        let center = PreparedInvalidationCenter()
+        let system = PreparedTextSystem(measurer: CachedFramesetterTextMeasurer(), invalidationCenter: center)
+        let prepared = system.prepare(
+            text("Background trim should be counted separately from full invalidation."),
+            sourceID: PreparedTextSourceID("background-trim")
+        )
+
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+        let before = system.diagnosticsSnapshot()
+
+        center.trimForBackground()
+        await settleInvalidation()
+
+        let snapshot = system.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.invalidations.backgroundTrimCount, 1)
+        XCTAssertEqual(snapshot.invalidations.lastReason, .backgroundTrim)
+        XCTAssertLessThanOrEqual(snapshot.layoutPacketCache.currentEntryCount, before.layoutPacketCache.currentEntryCount)
     }
 
     func testCSSNormalDisablesNativeLineBreakingWhenCoordinateSpaceChanges() {
@@ -497,6 +868,24 @@ final class PretextCoreTests: XCTestCase {
         return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 
+    private func attachmentText(width: CGFloat, height: CGFloat) -> NSAttributedString {
+        let attachment = NSTextAttachment()
+        attachment.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+
+        let attributed = NSMutableAttributedString(
+            string: "\u{FFFC}",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+        )
+        attributed.addAttribute(.attachment, value: attachment, range: NSRange(location: 0, length: attributed.length))
+        return attributed
+    }
+
+    @MainActor
+    private func settleInvalidation() async {
+        await Task.yield()
+        await Task.yield()
+    }
+
     private func readRepositoryFile(_ path: String) throws -> String {
         try String(contentsOf: repositoryRoot().appendingPathComponent(path), encoding: .utf8)
     }
@@ -532,5 +921,46 @@ final class PretextCoreTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+}
+
+private final class LegacyPreparedTextEngine: PreparedTextEngine {
+    private let backing = DefaultPreparedTextEngine()
+
+    func prepare(_ attributedText: NSAttributedString, options: PreparedTextOptions) -> PreparedText {
+        backing.prepare(attributedText, options: options)
+    }
+
+    func prepare(
+        _ attributedText: NSAttributedString,
+        sourceID: PreparedTextSourceID,
+        options: PreparedTextOptions
+    ) -> PreparedText {
+        backing.prepare(attributedText, sourceID: sourceID, options: options)
+    }
+
+    func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult {
+        backing.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+    }
+
+    func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult? {
+        backing.nextLine(prepared, cursor: cursor, maxWidth: maxWidth)
+    }
+
+    func attributedLine(_ prepared: PreparedText, line: LineResult) -> NSAttributedString {
+        backing.attributedLine(prepared, line: line)
+    }
+
+    func attributedText(
+        _ prepared: PreparedText,
+        from start: LayoutCursor,
+        to end: LayoutCursor?,
+        flatteningHardBreaks: Bool
+    ) -> NSAttributedString {
+        backing.attributedText(prepared, from: start, to: end, flatteningHardBreaks: flatteningHardBreaks)
+    }
+
+    func invalidateCaches() {
+        backing.invalidateCaches()
     }
 }

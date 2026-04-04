@@ -18,6 +18,7 @@ public struct PreparedCopy: View {
     private let storage: Storage
     private let whiteSpaceMode: WhiteSpaceMode
     private let lineHeightOverride: CGFloat?
+    private let measurementOptions: PreparedTextMeasurementOptions
     private let maxLayoutWidth: CGFloat?
     private let numberOfLines: Int
     private let lineBreakMode: NSLineBreakMode
@@ -32,6 +33,7 @@ public struct PreparedCopy: View {
         sourceID: PreparedTextSourceID? = nil,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -46,6 +48,7 @@ public struct PreparedCopy: View {
         )
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -60,6 +63,7 @@ public struct PreparedCopy: View {
         sourceID: PreparedTextSourceID? = nil,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -71,6 +75,7 @@ public struct PreparedCopy: View {
         self.storage = .attributed(NSAttributedString(attributedString), sourceID)
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -85,6 +90,7 @@ public struct PreparedCopy: View {
         sourceID: PreparedTextSourceID? = nil,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -96,6 +102,7 @@ public struct PreparedCopy: View {
         self.storage = .attributed(attributedText, sourceID)
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -109,6 +116,7 @@ public struct PreparedCopy: View {
         _ preparedText: PreparedText,
         whiteSpaceMode: WhiteSpaceMode = .uikitLiteral,
         lineHeightOverride: CGFloat? = nil,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
         maxLayoutWidth: CGFloat? = nil,
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
@@ -120,6 +128,7 @@ public struct PreparedCopy: View {
         self.storage = .prepared(preparedText)
         self.whiteSpaceMode = whiteSpaceMode
         self.lineHeightOverride = lineHeightOverride
+        self.measurementOptions = measurementOptions
         self.maxLayoutWidth = maxLayoutWidth
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
@@ -137,6 +146,7 @@ public struct PreparedCopy: View {
                 sourceID: sourceID,
                 whiteSpaceMode: whiteSpaceMode,
                 lineHeightOverride: lineHeightOverride,
+                measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
                 numberOfLines: numberOfLines,
                 lineBreakMode: lineBreakMode,
@@ -151,6 +161,7 @@ public struct PreparedCopy: View {
                 preparedText: preparedText,
                 whiteSpaceMode: whiteSpaceMode,
                 lineHeightOverride: lineHeightOverride,
+                measurementOptions: measurementOptions,
                 maxLayoutWidth: maxLayoutWidth,
                 numberOfLines: numberOfLines,
                 lineBreakMode: lineBreakMode,

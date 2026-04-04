@@ -572,11 +572,9 @@ struct TextSegmenter {
     }
 
     private func segmentMetrics(for attributedText: NSAttributedString) -> SegmentMeasurementCache.Metrics {
+        let signature = attributedText.pretextLayoutSignature()
         let key = SegmentMeasurementKey(
-            identity: .attributed(
-                payloadHash: attributedText.pretextPayloadHash(),
-                runSignatureHash: attributedText.pretextRunSignatureHash()
-            )
+            identity: .attributed(signature)
         )
 
         if let cached = segmentMeasurementCache.metric(for: key) {

@@ -7,9 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Phase 1 deterministic layout cache identity based on attributed content, attributed-range-sensitive layout signatures, and attachment-aware metrics.
+- Explicit measurement policy types for exact-width, bucketed-width, and pixel-aligned measurement behavior.
+- `PreparedInvalidationCenter` and `PreparedTextSystem` invalidation / diagnostics surfaces for explicit cache invalidation, background trim, and cache observability.
+
 ### Changed
 
 - Ongoing development happens here until the next tagged release.
+- Stage 0 and Stage 1 caches are now bounded with explicit diagnostics snapshots and cost-aware eviction reporting.
+- Benchmark reporting now covers repeated-width policy sweeps, cache hit rates, eviction counts, cache cost, and realistic Latin/Korean/CJK/emoji/attachment fixtures.
 
 ## [0.1.0] - 2026-04-03
 

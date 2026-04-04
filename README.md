@@ -139,6 +139,45 @@ The package product names stay as they are today:
 - `PretextValidation`
 - `PretextBenchmarks`
 
+## Phase 1 Engine Notes
+
+Phase 1 makes the library behave more like a reusable layout engine for read-only repeated-width surfaces.
+
+- cache identity is deterministic and attributed-range-aware rather than plain-string-only
+- inline attachment metrics participate in layout identity where they affect measurement
+- width normalization is explicit through `PreparedTextMeasurementOptions`
+- pixel-aligned measurement is an opt-in public mode rather than a hidden heuristic
+- invalidation and background trimming are explicit through `PreparedInvalidationCenter` / `PreparedTextSystem`
+- diagnostics are available through `PreparedTextSystem.diagnosticsSnapshot()`
+
+Example:
+
+```swift
+let measurementOptions = PreparedTextMeasurementOptions(
+    widthNormalizationPolicy: .bucketed(points: 4),
+    pixelMeasurementPolicy: .alignedToScale
+)
+
+let label = MeasurementCachingLabel().prepared(
+    sourceID: .init("feed/body"),
+    measurementOptions: measurementOptions
+)
+
+let preparedView = PreparedLabelView().prepared(
+    attributedText: NSAttributedString(string: "Prepared body copy"),
+    sourceID: .init("feed/body"),
+    measurementOptions: measurementOptions,
+    maxLayoutWidth: 320
+)
+
+let diagnostics = PreparedTextSystem.shared.diagnosticsSnapshot()
+PreparedInvalidationCenter.shared.trimForBackground()
+```
+
+Use exact-width identity when width precision is semantically important.
+Use bucketed widths when self-sizing surfaces revisit nearby widths and slightly conservative height reuse is acceptable.
+Use pixel-aligned mode when fractional width churn causes repeated measurement jitter.
+
 ## Development
 
 Useful local commands:
@@ -172,6 +211,7 @@ Maintainer and release docs:
 - [Repository setup](docs/REPOSITORY_SETUP.md)
 - [Validation](docs/Validation.md)
 - [Benchmarks](docs/Benchmarks.md)
+- [Migration guide](docs/MigrationGuide.md)
 - [Known gaps](docs/KnownGaps.md)
 
 ## Demo app

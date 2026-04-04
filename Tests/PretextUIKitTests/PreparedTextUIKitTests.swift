@@ -158,8 +158,24 @@ final class PreparedTextUIKitTests: XCTestCase {
 
     func testMeasurementCachingLabelPreparedSetsSourceID() {
         let sourceID = PreparedTextSourceID("ios-measurement-label-prepared")
-        let label = MeasurementCachingLabel().prepared(sourceID: sourceID)
+        let label: MeasurementCachingLabel = MeasurementCachingLabel().prepared(
+            sourceID: sourceID,
+            measurementOptions: .default
+        )
         XCTAssertEqual(label.sourceID, sourceID)
+    }
+
+    func testMeasurementCachingLabelPreparedAppliesMeasurementOptions() {
+        let measurementOptions = PreparedTextMeasurementOptions(
+            widthNormalizationPolicy: .bucketed(points: 4),
+            pixelMeasurementPolicy: .alignedToScale
+        )
+        let label = MeasurementCachingLabel().prepared(
+            sourceID: PreparedTextSourceID("ios-measurement-options"),
+            measurementOptions: measurementOptions
+        )
+
+        XCTAssertEqual(label.measurementOptions, measurementOptions)
     }
 
     func testPreparedLabelViewPreparedAppliesFluentConfiguration() {
@@ -185,6 +201,21 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertFalse(view.configuration.automaticallyOpensLinks)
     }
 
+    func testPreparedLabelViewPreparedAppliesMeasurementOptions() {
+        let measurementOptions = PreparedTextMeasurementOptions(
+            widthNormalizationPolicy: .bucketed(points: 2),
+            pixelMeasurementPolicy: .alignedToScale
+        )
+        let view = PreparedLabelView().prepared(
+            attributedText: text("Stage 1 measurement options should flow into public configuration."),
+            sourceID: PreparedTextSourceID("ios-stage1-measurement-options"),
+            measurementOptions: measurementOptions,
+            maxLayoutWidth: 180
+        )
+
+        XCTAssertEqual(view.configuration.measurementOptions, measurementOptions)
+    }
+
     func testPreparedTextViewSugarFromStringCompilesAndRenders() {
         let view: PreparedTextView = "Hello prepared string".prepared(numberOfLines: 2)
         let host = UIHostingController(rootView: view)
@@ -207,6 +238,19 @@ final class PreparedTextUIKitTests: XCTestCase {
         host.loadViewIfNeeded()
 
         XCTAssertNotNil(host.view)
+    }
+
+    func testPreparedTextViewStoresMeasurementOptions() {
+        let measurementOptions = PreparedTextMeasurementOptions(
+            widthNormalizationPolicy: .bucketed(points: 4),
+            pixelMeasurementPolicy: .alignedToScale
+        )
+        let view = PreparedTextView(
+            attributedText: NSAttributedString(string: "Hello prepared view"),
+            measurementOptions: measurementOptions
+        )
+
+        XCTAssertEqual(view.measurementOptions, measurementOptions)
     }
 
     func testExperimentalTextPreparedFromStringCompilesAndRenders() {

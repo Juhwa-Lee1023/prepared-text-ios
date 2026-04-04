@@ -33,12 +33,15 @@
 3. 커스텀 타입을 직접 도입할 수 있으면 `MeasurementCachingLabel().prepared(sourceID: ...)` 를 사용한다.
 4. Stage 1 로 올릴 surface 는 `PreparedLabelView().prepared(...)`, `PreparedTextView`, `PreparedCopy` 같은 explicit surface 로 연결하되, read-only multiline copy 에만 한정한다.
 5. 기본 whitespace contract 는 `.uikitLiteral` 로 둔다. CSS-like collapse 가 필요할 때만 `.cssNormal`, preserved whitespace 가 필요할 때만 `.preWrap` 를 opt-in 한다.
-6. stable SwiftUI sugar 는 `"Hello".prepared()`, `AttributedString("Hello").prepared()`, `NSAttributedString(...).prepared()` 처럼 명시적 payload 에만 쓴다.
-7. zero-arg `Text.prepared()` 는 지원하지 않는다. native SwiftUI `Text` 는 public API 만으로 prepared-text pipeline 으로 정직하게 변환할 수 없기 때문이다.
-8. ergonomic call-site syntax 가 꼭 필요하면 experimental `Text.prepared(source:)` 만 제한적으로 쓴다. 이때도 prepared renderer 는 `source` payload 를 authoritative input 으로 사용하고, 원래 `Text` modifier 는 자동으로 보존되지 않는다.
-9. `.legacyMultiline` 는 unlimited multiline UILabel 을 자동 도입하지만 interactive label, attributed link label, finite line limit truncation label 은 기본적으로 제외한다.
-10. 실제 화면 전환 전 `./scripts/run-tests.sh`, `./scripts/run-validation.sh`, `./scripts/run-benchmarks.sh`, `./scripts/run-ios-demo-tests.sh` 로 regression 을 확인한다.
-11. committed `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` 를 열어 chat/feed/list/card, table, collection self-sizing 경로를 확인한다.
+6. repeated-width self-sizing surface 에서는 `PreparedTextMeasurementOptions` 를 같이 설계한다. exact width 가 꼭 필요하지 않다면 `.bucketed(points: 4)` 부터 검토한다.
+7. fractional width churn 이 잦으면 `pixelMeasurementPolicy: .alignedToScale` 를 같이 검토한다. 특히 auto layout negotiation 이 반복되는 카드 / 피드 / 채팅 surface 에서 먼저 본다.
+8. stable SwiftUI sugar 는 `"Hello".prepared()`, `AttributedString("Hello").prepared()`, `NSAttributedString(...).prepared()` 처럼 명시적 payload 에만 쓴다.
+9. zero-arg `Text.prepared()` 는 지원하지 않는다. native SwiftUI `Text` 는 public API 만으로 prepared-text pipeline 으로 정직하게 변환할 수 없기 때문이다.
+10. ergonomic call-site syntax 가 꼭 필요하면 experimental `Text.prepared(source:)` 만 제한적으로 쓴다. 이때도 prepared renderer 는 `source` payload 를 authoritative input 으로 사용하고, 원래 `Text` modifier 는 자동으로 보존되지 않는다.
+11. `.legacyMultiline` 는 unlimited multiline UILabel 을 자동 도입하지만 interactive label, attributed link label, finite line limit truncation label 은 기본적으로 제외한다.
+12. Dynamic Type / locale / measurement policy 변경은 implicit 하게 기대하지 말고 `PreparedInvalidationCenter` 또는 `PreparedTextSystem` 의 invalidation surface 를 연결한다.
+13. 실제 화면 전환 전 `./scripts/run-tests.sh`, `./scripts/run-validation.sh`, `./scripts/run-benchmarks.sh`, `./scripts/run-ios-demo-tests.sh` 로 regression 을 확인한다.
+14. committed `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` 를 열어 chat/feed/list/card, table, collection self-sizing 경로를 확인한다.
 
 ## Do Not Migrate Yet
 

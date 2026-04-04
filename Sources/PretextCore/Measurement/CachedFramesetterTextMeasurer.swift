@@ -6,48 +6,86 @@ public protocol TextMeasurer: AnyObject {
     func measure(_ text: NSAttributedString, width: CGFloat, env: MeasurementEnv) -> CGSize
     func measure(_ text: NSAttributedString, sourceID: PreparedTextSourceID, width: CGFloat, env: MeasurementEnv) -> CGSize
     func invalidateAll()
+    func invalidate(sourceIDs: Set<PreparedTextSourceID>)
     var stats: MeasurementStats { get }
 }
 
 public final class CachedFramesetterTextMeasurer: TextMeasurer {
     private let lock = NSLock()
-    private let cache = CostBoundCache<MeasurementKey, MeasurementCacheEntry>(
-        countLimit: 1_024,
-        totalCostLimit: 4 * 1_024 * 1_024,
-        cost: { entry in
-            MemoryLayout<CGSize>.size + ((entry.sourceSnapshot?.length ?? 0) * 4)
-        }
-    )
+    private let cache: CostBoundCache<MeasurementKey, MeasurementCacheEntry>
     private var inFlightMeasurements: [MeasurementKey: InFlightMeasurement] = [:]
     private var hitCount = 0
     private var missCount = 0
 
-    public init() {}
+    public convenience init() {
+        self.init(countLimit: 1_024, totalCostLimit: 4 * 1_024 * 1_024)
+    }
+
+    init(countLimit: Int, totalCostLimit: Int) {
+        cache = CostBoundCache(
+            countLimit: countLimit,
+            totalCostLimit: totalCostLimit,
+            cost: { entry in
+                max(entry.identity.signature.length, 1) * 4
+                    + entry.identity.signature.attributeRunCount * 48
+                    + entry.identity.signature.attachmentCount * 384
+                    + Int((entry.size.width + entry.size.height).rounded(.up)) * 8
+            }
+        )
+    }
 
     public var stats: MeasurementStats {
         lock.withLock {
-            MeasurementStats(hitCount: hitCount, missCount: missCount)
+            MeasurementStats(hitCount: hitCount, missCount: missCount, cacheSnapshot: cache.snapshot)
         }
     }
 
     public func measure(_ text: NSAttributedString, width: CGFloat, env: MeasurementEnv) -> CGSize {
-        measure(text, identity: .attributed(payloadHash: text.pretextPayloadHash(), runSignatureHash: text.pretextRunSignatureHash()), width: width, env: env)
+        let signature = text.pretextLayoutSignature()
+        return measure(text, identity: .attributed(signature), width: width, env: env)
     }
 
     public func measure(_ text: NSAttributedString, sourceID: PreparedTextSourceID, width: CGFloat, env: MeasurementEnv) -> CGSize {
-        measure(text, identity: .sourceID(sourceID), width: width, env: env)
+        let signature = text.pretextLayoutSignature()
+        return measure(text, identity: .sourceID(sourceID, signature), width: width, env: env)
     }
 
     public func invalidateAll() {
         lock.withLock {
             hitCount = 0
             missCount = 0
+            inFlightMeasurements.removeAll(keepingCapacity: false)
         }
         cache.removeAll()
     }
 
+    public func invalidate(sourceIDs: Set<PreparedTextSourceID>) {
+        guard !sourceIDs.isEmpty else {
+            return
+        }
+
+        lock.withLock {
+            inFlightMeasurements = inFlightMeasurements.filter { key, _ in
+                guard let sourceID = key.identity.sourceID else {
+                    return true
+                }
+                return !sourceIDs.contains(sourceID)
+            }
+        }
+
+        cache.removeAll { key, _ in
+            guard let sourceID = key.identity.sourceID else {
+                return false
+            }
+            return sourceIDs.contains(sourceID)
+        }
+    }
+
     func trimForBackground() {
-        cache.removeAll()
+        let snapshot = cache.snapshot
+        let targetCount = snapshot.countLimit.map { max($0 / 2, 1) }
+        let targetCost = snapshot.totalCostLimit.map { max($0 / 2, 1) }
+        cache.trim(countLimit: targetCount, totalCostLimit: targetCost)
     }
 
     private func measure(_ text: NSAttributedString, identity: CacheIdentity, width: CGFloat, env: MeasurementEnv) -> CGSize {
@@ -55,6 +93,7 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
             return .zero
         }
 
+        let resolvedWidth = env.resolvedMeasurementWidth(width)
         let key = MeasurementKey(
             identity: identity,
             widthInPixels: env.normalizedWidth(width),
@@ -63,7 +102,7 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
 
         while true {
             let state: MeasurementLookupState = lock.withLock {
-                if let cached = cache.value(forKey: key), cached.matches(text, for: identity) {
+                if let cached = cache.value(forKey: key), cached.identity == identity {
                     hitCount += 1
                     return .hit(cached)
                 }
@@ -84,7 +123,7 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
 
             case let .wait(inFlight):
                 let resolved = inFlight.waitForResult()
-                if resolved.matches(text, for: identity) {
+                if resolved.identity == identity {
                     lock.withLock {
                         hitCount += 1
                     }
@@ -93,12 +132,8 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
                 continue
 
             case let .measure(inFlight):
-                let snapshot = immutableSnapshot(of: text)
-                let measured = measureWithCoreText(snapshot, width: width, env: env)
-                let entry = MeasurementCacheEntry(
-                    size: measured,
-                    sourceSnapshot: identity.requiresSourceValidation ? snapshot : nil
-                )
+                let measured = measureWithCoreText(text, width: resolvedWidth, env: env)
+                let entry = MeasurementCacheEntry(size: measured, identity: identity)
 
                 lock.withLock {
                     cache.insert(entry, forKey: key)
@@ -127,25 +162,11 @@ public final class CachedFramesetterTextMeasurer: TextMeasurer {
 
         return CGSize(width: normalizedWidth, height: normalizedHeight)
     }
-
-    private func immutableSnapshot(of text: NSAttributedString) -> NSAttributedString {
-        text.copy() as? NSAttributedString ?? NSAttributedString(attributedString: text)
-    }
 }
 
 private struct MeasurementCacheEntry {
     let size: CGSize
-    let sourceSnapshot: NSAttributedString?
-
-    func matches(_ text: NSAttributedString, for identity: CacheIdentity) -> Bool {
-        guard identity.requiresSourceValidation else {
-            return true
-        }
-        guard let sourceSnapshot else {
-            return false
-        }
-        return sourceSnapshot === text || sourceSnapshot.isEqual(to: text)
-    }
+    let identity: CacheIdentity
 }
 
 private final class InFlightMeasurement {
