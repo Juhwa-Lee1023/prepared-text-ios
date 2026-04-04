@@ -338,6 +338,143 @@ final class PretextCoreTests: XCTestCase {
         )
     }
 
+    func testCoreLayoutPacketTreatsUnlimitedMaximumNumberOfLinesAsUnlimited() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Unlimited line limits should keep the legacy full-layout path intact."),
+            sourceID: PreparedTextSourceID("core-layout-unlimited"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let legacyPacket = engine.layoutPacket(
+            prepared,
+            maxWidth: 96,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default
+        )
+        let promotedPacket = engine.layoutPacket(
+            prepared,
+            maxWidth: 96,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 0,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        XCTAssertEqual(promotedPacket.result, legacyPacket.result)
+        XCTAssertEqual(promotedPacket.lines.count, legacyPacket.lines.count)
+        XCTAssertFalse(promotedPacket.result.stoppedEarlyAtMaximumNumberOfLines)
+        XCTAssertFalse(promotedPacket.result.isTruncated)
+    }
+
+    func testCoreLayoutPacketStopsEarlyForFiniteLineLayouts() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Feed cards should stop after the visible line limit rather than materializing every later line."),
+            sourceID: PreparedTextSourceID("core-layout-max-lines"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let unlimited = engine.layoutPacket(
+            prepared,
+            maxWidth: 92,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default
+        )
+        let limited = engine.layoutPacket(
+            prepared,
+            maxWidth: 92,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 2,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        XCTAssertGreaterThan(unlimited.lines.count, 2)
+        XCTAssertEqual(limited.lines.count, 2)
+        XCTAssertTrue(limited.result.stoppedEarlyAtMaximumNumberOfLines)
+        XCTAssertTrue(limited.result.isTruncated)
+        XCTAssertTrue(limited.lines.last?.isTruncated ?? false)
+    }
+
+    func testCoreLayoutPacketWordWrapLineLimitStillReportsTruncationWithoutEllipsis() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Word wrapping with a finite line limit should clip later lines without inventing an ellipsis token."),
+            sourceID: PreparedTextSourceID("core-layout-word-wrap-limit"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 100,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .wordWrap,
+                lineBreakStrategy: .automatic,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        XCTAssertEqual(packet.lines.count, 1)
+        XCTAssertTrue(packet.result.isTruncated)
+        XCTAssertTrue(packet.result.stoppedEarlyAtMaximumNumberOfLines)
+        XCTAssertTrue(packet.lines[0].isTruncated)
+        XCTAssertFalse(packet.lines[0].attributedText.string.contains("…"))
+    }
+
+    func testCoreLayoutPacketLayoutDirectionResolvesNaturalAlignment() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Natural alignment should resolve against the promoted layout direction."),
+            sourceID: PreparedTextSourceID("core-layout-direction"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let leftToRight = engine.layoutPacket(
+            prepared,
+            maxWidth: 140,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .leading,
+                layoutDirection: .leftToRight
+            )
+        )
+        let rightToLeft = engine.layoutPacket(
+            prepared,
+            maxWidth: 140,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .leading,
+                layoutDirection: .rightToLeft
+            )
+        )
+
+        XCTAssertEqual(leftToRight.lines.first?.resolvedAlignment, .left)
+        XCTAssertEqual(rightToLeft.lines.first?.resolvedAlignment, .right)
+    }
+
     func testPreparedTextCursorUtf16RoundTripsAcrossPreparedSource() {
         let engine = DefaultPreparedTextEngine()
         let prepared = engine.prepare(
@@ -483,14 +620,16 @@ final class PretextCoreTests: XCTestCase {
             widthInPixels: env.normalizedWidth(96),
             lineHeightKey: env.cacheScalarKey(literal.defaultLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: literal.storage.options)
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: literal.storage.options),
+            layoutOptions: .default
         )
         let cssNormalKey = LayoutPacketKey(
             identity: cssNormal.storage.layoutIdentity,
             widthInPixels: env.normalizedWidth(96),
             lineHeightKey: env.cacheScalarKey(cssNormal.defaultLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: cssNormal.storage.options)
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: cssNormal.storage.options),
+            layoutOptions: .default
         )
 
         XCTAssertNotEqual(literalKey, cssNormalKey)
@@ -501,6 +640,113 @@ final class PretextCoreTests: XCTestCase {
         let snapshot = engine.diagnosticsSnapshot()
         XCTAssertEqual(snapshot.layoutPacketReuseCount, 0)
         XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 2)
+    }
+
+    func testLayoutPacketCacheKeyIncludesPromotedLayoutOptions() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Promoted layout options should participate in cache identity."),
+            sourceID: PreparedTextSourceID("layout-packet-layout-options"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let env = MeasurementEnv.default
+        let truncatedOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 1,
+            lineBreakMode: .truncateTail,
+            lineBreakStrategy: .automatic,
+            alignment: .natural,
+            layoutDirection: .leftToRight
+        )
+        let middleOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 1,
+            lineBreakMode: .truncateMiddle,
+            lineBreakStrategy: .automatic,
+            alignment: .natural,
+            layoutDirection: .leftToRight
+        )
+
+        let truncatedKey = LayoutPacketKey(
+            identity: prepared.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(120),
+            lineHeightKey: env.cacheScalarKey(prepared.defaultLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
+            layoutOptions: truncatedOptions
+        )
+        let middleKey = LayoutPacketKey(
+            identity: prepared.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(120),
+            lineHeightKey: env.cacheScalarKey(prepared.defaultLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
+            layoutOptions: middleOptions
+        )
+
+        XCTAssertNotEqual(truncatedKey, middleKey)
+
+        let truncatedPacket = engine.layoutPacket(
+            prepared,
+            maxWidth: 120,
+            lineHeight: prepared.defaultLineHeight,
+            env: env,
+            options: truncatedOptions
+        )
+        let middlePacket = engine.layoutPacket(
+            prepared,
+            maxWidth: 120,
+            lineHeight: prepared.defaultLineHeight,
+            env: env,
+            options: middleOptions
+        )
+
+        XCTAssertNotEqual(truncatedPacket.lines.first?.attributedText.string, middlePacket.lines.first?.attributedText.string)
+        XCTAssertEqual(engine.diagnosticsSnapshot().layoutPacketCache.currentEntryCount, 2)
+    }
+
+    func testLineBreakStrategyCanChangeFiniteLineURLLayout() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Visit https://example.com/prepared-layouts for rollout notes and cache visibility."),
+            sourceID: PreparedTextSourceID("layout-packet-line-break-strategy"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let urlFriendlyOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 2,
+            lineBreakMode: .wordWrap,
+            lineBreakStrategy: .urlFriendly,
+            alignment: .natural,
+            layoutDirection: .leftToRight
+        )
+        let nativeOptions = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 2,
+            lineBreakMode: .wordWrap,
+            lineBreakStrategy: .nativeTypesetterPreferred,
+            alignment: .natural,
+            layoutDirection: .leftToRight
+        )
+
+        XCTAssertNotEqual(urlFriendlyOptions, nativeOptions)
+        let widths: [CGFloat] = [72, 84, 96, 108, 120, 132]
+        let differsAtAnyWidth = widths.contains { width in
+            let urlFriendly = engine.layoutPacket(
+                prepared,
+                maxWidth: width,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: urlFriendlyOptions
+            )
+            let native = engine.layoutPacket(
+                prepared,
+                maxWidth: width,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: nativeOptions
+            )
+            return urlFriendly.lines.map { $0.attributedText.string } != native.lines.map { $0.attributedText.string }
+        }
+
+        XCTAssertTrue(differsAtAnyWidth)
     }
 
     func testExplicitLineHeightControlsFragmentBlockAdvance() {

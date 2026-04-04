@@ -37,6 +37,11 @@ public struct PreparedTextView: UIViewRepresentable {
         set { layoutOptions.lineBreakMode = PreparedTextLineBreakMode(newValue) }
     }
 
+    public var lineBreakStrategy: PreparedTextLineBreakStrategy {
+        get { layoutOptions.lineBreakStrategy }
+        set { layoutOptions.lineBreakStrategy = newValue }
+    }
+
     public var textAlignment: NSTextAlignment? {
         get { layoutOptions.alignment.nsTextAlignment }
         set { layoutOptions.alignment = PreparedTextHorizontalAlignment(newValue) }

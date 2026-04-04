@@ -13,6 +13,13 @@ public protocol PreparedTextEngine: AnyObject {
     func prepare(_ attributedText: NSAttributedString, sourceID: PreparedTextSourceID, options: PreparedTextOptions) -> PreparedText
     func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult
     func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult
+    func layout(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
+    ) -> LayoutResult
     func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult?
     func attributedLine(_ prepared: PreparedText, line: LineResult) -> NSAttributedString
     func attributedText(_ prepared: PreparedText, from start: LayoutCursor, to end: LayoutCursor?, flatteningHardBreaks: Bool) -> NSAttributedString
@@ -23,6 +30,16 @@ public protocol PreparedTextEngine: AnyObject {
 public extension PreparedTextEngine {
     func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult {
         layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+    }
+
+    func layout(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options _: PreparedTextLayoutOptions
+    ) -> LayoutResult {
+        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
     }
 
     func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot {
@@ -88,15 +105,25 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     }
 
     public func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult {
-        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default, options: .default)
     }
 
     public func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat, env: MeasurementEnv) -> LayoutResult {
-        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env).result
+        layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: .default)
+    }
+
+    public func layout(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
+    ) -> LayoutResult {
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options).result
     }
 
     public func layoutPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedLayoutPacket {
-        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default)
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default, options: .default)
     }
 
     public func layoutPacket(
@@ -104,6 +131,16 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         maxWidth: CGFloat,
         lineHeight: CGFloat,
         env: MeasurementEnv
+    ) -> PreparedLayoutPacket {
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: .default)
+    }
+
+    public func layoutPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
     ) -> PreparedLayoutPacket {
         let resolvedLineHeight = lineHeight > 0 ? lineHeight : prepared.defaultLineHeight
         guard maxWidth >= 0 else {
@@ -116,7 +153,8 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             widthInPixels: env.normalizedWidth(maxWidth),
             lineHeightKey: env.cacheScalarKey(resolvedLineHeight),
             context: MeasurementCacheContext(env: env),
-            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options)
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
+            layoutOptions: options
         )
 
         if let cached = layoutPacketCache.value(forKey: key) {
@@ -126,30 +164,13 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         }
 
         let packet = PreparedTextSignposts.measure("Stage1LayoutPacket") {
-            var drawLines: [PreparedDrawLine] = []
-            drawLines.reserveCapacity(8)
-
-            var cursor = LayoutCursor()
-            while let line = rawNextLine(prepared, cursor: cursor, maxWidth: resolvedWidth) {
-                let attributed = attributedLine(prepared, line: line)
-                let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
-                let fragment = buildFragment(
-                    for: prepared,
-                    line: line,
-                    attributedLine: attributed,
-                    ctLine: ctLine,
-                    requestedLineHeight: resolvedLineHeight
-                )
-                drawLines.append(PreparedDrawLine(fragment: fragment, attributedText: attributed, ctLine: ctLine))
-                cursor = line.end
-            }
-
-            let result = LayoutResult(
-                fragments: drawLines.map(\.fragment),
-                height: drawLines.reduce(0) { $0 + $1.fragment.blockAdvance },
-                maxPaintWidth: drawLines.map(\.fragment.paintWidth).max() ?? 0
-            )
-            return PreparedLayoutPacket(result: result, lines: drawLines)
+            PreparedTextCoreLayoutBuilder(
+                engine: self,
+                prepared: prepared,
+                layoutWidth: resolvedWidth,
+                requestedLineHeight: resolvedLineHeight,
+                options: options
+            ).build()
         }
         layoutPacketCache.insert(packet, forKey: key)
         recordObservedLayout(packet.result.lineCount)
@@ -376,8 +397,13 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         return prepared
     }
 
-    private func rawNextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult? {
-        if prepared.storage.core.prefersNativeLineBreaking,
+    func rawNextLine(
+        _ prepared: PreparedText,
+        cursor: LayoutCursor,
+        maxWidth: CGFloat,
+        strategy: PreparedTextLineBreakStrategy = .automatic
+    ) -> LineResult? {
+        if shouldUseNativeLineBreaking(for: prepared, strategy: strategy),
            let nativeLine = nativeNextLine(prepared, cursor: cursor, maxWidth: maxWidth),
            nativeLine.end > cursor {
             return nativeLine
@@ -386,7 +412,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         return walker.nextLine(from: cursor, maxWidth: maxWidth)
     }
 
-    private func buildFragment(
+    func buildFragment(
         for prepared: PreparedText,
         line: LineResult,
         attributedLine: NSAttributedString,
@@ -577,6 +603,22 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         }
 
         return hasRTLScript
+    }
+
+    func shouldUseNativeLineBreaking(
+        for prepared: PreparedText,
+        strategy: PreparedTextLineBreakStrategy
+    ) -> Bool {
+        switch strategy {
+        case .automatic:
+            return prepared.storage.core.prefersNativeLineBreaking
+        case .uikitConservative, .urlFriendly:
+            return false
+        case .cjkImproved:
+            return prepared.storage.core.segments.contains { $0.kind == .cjkRun } || prepared.storage.core.prefersNativeLineBreaking
+        case .nativeTypesetterPreferred:
+            return true
+        }
     }
 
     private func nativeNextLine(_ prepared: PreparedText, cursor startCursor: LayoutCursor, maxWidth: CGFloat) -> LineResult? {

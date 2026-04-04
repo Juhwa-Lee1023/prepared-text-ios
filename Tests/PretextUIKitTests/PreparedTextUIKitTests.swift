@@ -220,6 +220,7 @@ final class PreparedTextUIKitTests: XCTestCase {
         let layoutOptions = PreparedTextLayoutOptions(
             maximumNumberOfLines: 2,
             lineBreakMode: .truncateMiddle,
+            lineBreakStrategy: .nativeTypesetterPreferred,
             alignment: .center,
             layoutDirection: .rightToLeft
         )
@@ -233,6 +234,8 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(view.configuration.layoutOptions, layoutOptions)
         XCTAssertEqual(view.configuration.numberOfLines, 2)
         XCTAssertEqual(view.configuration.lineBreakMode, .byTruncatingMiddle)
+        XCTAssertEqual(view.configuration.lineBreakStrategy, .nativeTypesetterPreferred)
+        XCTAssertEqual(view.lineBreakStrategy, .nativeTypesetterPreferred)
         XCTAssertEqual(view.configuration.textAlignment, .center)
     }
 
@@ -261,6 +264,7 @@ final class PreparedTextUIKitTests: XCTestCase {
         let layoutOptions = PreparedTextLayoutOptions(
             maximumNumberOfLines: 1,
             lineBreakMode: .truncateMiddle,
+            lineBreakStrategy: .urlFriendly,
             alignment: .trailing,
             layoutDirection: .rightToLeft
         )
@@ -272,6 +276,7 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(view.layoutOptions, layoutOptions)
         XCTAssertEqual(view.numberOfLines, 1)
         XCTAssertEqual(view.lineBreakMode, .byTruncatingMiddle)
+        XCTAssertEqual(view.lineBreakStrategy, .urlFriendly)
     }
 
     func testPreparedLabelViewPreservesAbsoluteTextAlignment() {

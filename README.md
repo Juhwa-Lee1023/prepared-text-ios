@@ -139,7 +139,7 @@ The package product names stay as they are today:
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 engine improvements
+## Phase 1 and Phase 2 engine improvements
 
 The current library story is stronger than "a text view wrapper".
 It now behaves like a reusable layout engine for read-only repeated-width surfaces:
@@ -150,6 +150,8 @@ It now behaves like a reusable layout engine for read-only repeated-width surfac
 - explicit invalidation through `PreparedInvalidationCenter`
 - public diagnostics through `PreparedTextDiagnosticsSnapshot`
 - attachment-aware placeholder/resolver plumbing through `PreparedAttachmentRegistry`
+- core-owned finite-line display policy through `PreparedTextLayoutOptions`
+- public line-break strategy selection through `PreparedTextLineBreakStrategy`
 
 Example:
 
@@ -173,15 +175,15 @@ let measurementEnv = MeasurementEnv(
 let layoutOptions = PreparedTextLayoutOptions(
     maximumNumberOfLines: 2,
     lineBreakMode: .truncateTail,
+    lineBreakStrategy: .urlFriendly,
     alignment: .natural,
     layoutDirection: .leftToRight
 )
 
-let packet = system.displayLayoutPacket(
+let packet = system.layoutPacket(
     prepared,
     maxWidth: 320,
     lineHeight: prepared.defaultLineHeight,
-    containerWidth: 320,
     env: measurementEnv,
     options: layoutOptions
 )
@@ -192,6 +194,19 @@ let coordinateMap = packet.sourceCoordinateMap
 Use exact widths when visual parity matters more than cache reuse.
 Use bucketed widths when self-sizing loops keep probing nearby proposals and a slight over-measure is acceptable.
 Use pixel-aligned measurement when fractional width jitter is causing unstable repeated measurement.
+Use `PreparedTextLayoutOptions` when a line-limited card, summary block, or feed row should be a first-class engine layout scenario rather than UIKit-only post-processing.
+
+In Phase 2, the core engine itself owns:
+
+- `maximumNumberOfLines`
+- truncation mode
+- line-break strategy
+- layout-direction-sensitive alignment resolution
+- visible line count and visible source range
+- truncation state and early-stop semantics
+
+That means a 2-line tail-truncated feed card now has its own prepared layout key and reuse behavior in the core engine.
+`PreparedLabelView` and `PreparedTextView` consume that result for rendering instead of inventing truncation semantics on their own.
 
 Attachment support is now identity-aware and placeholder-aware, but it is still not a full async attachment rendering framework.
 
@@ -201,7 +216,7 @@ Additional narrow surfaces also exist on top of the Phase 1 engine:
 - `PreparedTextSourceCoordinateMap` for displayed source-span inspection
 - `PreparedTextObstacleLayouter` for reusable circle-obstacle exclusion layout
 
-Those APIs remain intentionally narrow follow-up surfaces. They do not change the core product story into a broad text toolkit, and the main Phase 1 value is still the deterministic cache / invalidation / observability work above.
+Those APIs remain intentionally narrow follow-up surfaces. They do not change the core product story into a broad text toolkit, and the main value is still deterministic reuse, bounded caches, explicit invalidation, and core-owned read-only display policy.
 
 ## Development
 

@@ -86,6 +86,16 @@ public final class PreparedTextSystem: NSObject {
         engine.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
     }
 
+    public func layout(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions
+    ) -> LayoutResult {
+        engine.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
+    }
+
     public func layoutPacket(
         _ prepared: PreparedText,
         maxWidth: CGFloat,
@@ -101,6 +111,16 @@ public final class PreparedTextSystem: NSObject {
         env: MeasurementEnv
     ) -> PreparedLayoutPacket {
         engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
+    }
+
+    public func layoutPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions
+    ) -> PreparedLayoutPacket {
+        engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
     }
 
     public func displayLayoutPacket(

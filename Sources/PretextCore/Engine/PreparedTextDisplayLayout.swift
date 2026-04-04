@@ -17,6 +17,30 @@ public enum PreparedTextLineBreakMode: String, Hashable, Sendable {
     case truncateTail
 }
 
+/// Controls which core line-breaking path the prepared layout engine uses.
+///
+/// This remains intentionally narrow. It does not promise browser-grade line breaking;
+/// it only selects between the engine's prepared walker and Core Text's native typesetter
+/// where that materially affects read-only prepared layout reuse.
+public enum PreparedTextLineBreakStrategy: String, Hashable, Sendable {
+    /// Use the engine's built-in heuristic to choose between conservative prepared breaking
+    /// and the native Core Text typesetter for scripts that benefit from it.
+    case automatic
+
+    /// Stay on the prepared walker that favors conservative UIKit-like break decisions.
+    case uikitConservative
+
+    /// Prefer the prepared walker for URL/social-token-heavy copy where delimiter-aware
+    /// breaking is often more important than native typesetter shaping.
+    case urlFriendly
+
+    /// Prefer the native typesetter for CJK-heavy or mixed-script copy when available.
+    case cjkImproved
+
+    /// Always prefer the native typesetter when a coordinate-preserving native source exists.
+    case nativeTypesetterPreferred
+}
+
 public enum PreparedTextHorizontalAlignment: String, Hashable, Sendable {
     case natural
     case left
@@ -35,17 +59,20 @@ public enum PreparedTextLayoutDirection: String, Hashable, Sendable {
 public struct PreparedTextLayoutOptions: Hashable, Sendable {
     public var maximumNumberOfLines: Int
     public var lineBreakMode: PreparedTextLineBreakMode
+    public var lineBreakStrategy: PreparedTextLineBreakStrategy
     public var alignment: PreparedTextHorizontalAlignment
     public var layoutDirection: PreparedTextLayoutDirection
 
     public init(
         maximumNumberOfLines: Int = 0,
         lineBreakMode: PreparedTextLineBreakMode = .truncateTail,
+        lineBreakStrategy: PreparedTextLineBreakStrategy = .automatic,
         alignment: PreparedTextHorizontalAlignment = .natural,
         layoutDirection: PreparedTextLayoutDirection = .natural
     ) {
         self.maximumNumberOfLines = max(maximumNumberOfLines, 0)
         self.lineBreakMode = lineBreakMode
+        self.lineBreakStrategy = lineBreakStrategy
         self.alignment = alignment
         self.layoutDirection = layoutDirection
     }
@@ -225,14 +252,16 @@ public extension DefaultPreparedTextEngine {
     ) -> PreparedTextDisplayPacket {
         let resolvedLayoutWidth = env.resolvedMeasurementWidth(maxWidth)
         let resolvedContainerWidth = max(containerWidth ?? resolvedLayoutWidth, resolvedLayoutWidth)
-        let layoutPacket = layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
-        return PreparedTextDisplayLayoutBuilder(
-            engine: self,
-            prepared: prepared,
-            layoutPacket: layoutPacket,
-            layoutWidth: resolvedLayoutWidth,
-            containerWidth: resolvedContainerWidth,
+        let layoutPacket = layoutPacket(
+            prepared,
+            maxWidth: maxWidth,
+            lineHeight: lineHeight,
+            env: env,
             options: options
+        )
+        return PreparedTextDisplayLayoutBuilder(
+            layoutPacket: layoutPacket,
+            containerWidth: resolvedContainerWidth
         ).build()
     }
 
@@ -244,18 +273,17 @@ public extension DefaultPreparedTextEngine {
         env: MeasurementEnv = .default,
         options: PreparedTextLayoutOptions = .default
     ) -> PreparedTextSourceCoordinateMap {
-        displayLayoutPacket(
+        layoutPacket(
             prepared,
             maxWidth: maxWidth,
             lineHeight: lineHeight,
-            containerWidth: containerWidth,
             env: env,
             options: options
         ).sourceCoordinateMap
     }
 }
 
-private struct PreparedTextDisplayLayoutBuilder {
+struct PreparedTextCoreLayoutBuilder {
     private struct TruncationComposition {
         var attributedText: NSAttributedString
         var sourceSpans: [PreparedTextSourceCoordinateSpan]
@@ -264,104 +292,130 @@ private struct PreparedTextDisplayLayoutBuilder {
 
     private let engine: DefaultPreparedTextEngine
     private let prepared: PreparedText
-    private let layoutPacket: PreparedLayoutPacket
     private let layoutWidth: CGFloat
-    private let containerWidth: CGFloat
+    private let requestedLineHeight: CGFloat
     private let options: PreparedTextLayoutOptions
 
     init(
         engine: DefaultPreparedTextEngine,
         prepared: PreparedText,
-        layoutPacket: PreparedLayoutPacket,
         layoutWidth: CGFloat,
-        containerWidth: CGFloat,
+        requestedLineHeight: CGFloat,
         options: PreparedTextLayoutOptions
     ) {
         self.engine = engine
         self.prepared = prepared
-        self.layoutPacket = layoutPacket
         self.layoutWidth = layoutWidth
-        self.containerWidth = containerWidth
+        self.requestedLineHeight = requestedLineHeight
         self.options = options
     }
 
-    func build() -> PreparedTextDisplayPacket {
-        let visibleLineCount = options.maximumNumberOfLines > 0
-            ? min(options.maximumNumberOfLines, layoutPacket.lines.count)
-            : layoutPacket.lines.count
-
-        guard visibleLineCount > 0 else {
-            return PreparedTextDisplayPacket(
+    func build() -> PreparedLayoutPacket {
+        let maximumVisibleLines = options.maximumNumberOfLines > 0 ? options.maximumNumberOfLines : Int.max
+        guard maximumVisibleLines > 0 else {
+            return PreparedLayoutPacket(
                 result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0),
                 lines: []
             )
         }
 
-        let isClipped = visibleLineCount < layoutPacket.lines.count
-        var lines: [PreparedTextDisplayLine] = []
-        lines.reserveCapacity(visibleLineCount)
+        var drawLines: [PreparedDrawLine] = []
+        drawLines.reserveCapacity(min(maximumVisibleLines, 8))
 
-        for index in 0..<visibleLineCount {
-            let sourceLine = layoutPacket.lines[index]
-            if isClipped, index == visibleLineCount - 1 {
-                lines.append(makeFinalDisplayLine(from: sourceLine))
-            } else {
-                lines.append(makeDisplayLine(from: sourceLine))
+        var cursor = LayoutCursor()
+        var stoppedEarly = false
+
+        while drawLines.count < maximumVisibleLines,
+              let line = engine.rawNextLine(
+                  prepared,
+                  cursor: cursor,
+                  maxWidth: layoutWidth,
+                  strategy: options.lineBreakStrategy
+              ) {
+            let reachedLastVisibleLine = options.maximumNumberOfLines > 0 && drawLines.count + 1 == maximumVisibleLines
+            if reachedLastVisibleLine,
+               engine.rawNextLine(
+                   prepared,
+                   cursor: line.end,
+                   maxWidth: layoutWidth,
+                   strategy: options.lineBreakStrategy
+               ) != nil {
+                drawLines.append(makeFinalVisibleLine(from: line))
+                stoppedEarly = true
+                break
             }
+
+            drawLines.append(makeVisibleLine(from: line))
+            cursor = line.end
         }
 
+        let fragments = drawLines.map(\.fragment)
+        let visibleRanges = drawLines.flatMap { line in
+            line.sourceSpans.compactMap(\.sourceUTF16Range)
+        }
         let result = LayoutResult(
-            fragments: lines.map(\.fragment),
-            height: lines.reduce(0) { $0 + $1.fragment.blockAdvance },
-            maxPaintWidth: lines.map(\.lineWidth).max() ?? 0
+            fragments: fragments,
+            height: fragments.reduce(0) { $0 + $1.blockAdvance },
+            maxPaintWidth: fragments.map(\.paintWidth).max() ?? 0,
+            isTruncated: drawLines.contains(where: \.isTruncated),
+            stoppedEarlyAtMaximumNumberOfLines: stoppedEarly,
+            visibleSourceUTF16Ranges: visibleRanges
         )
-        return PreparedTextDisplayPacket(result: result, lines: lines)
+        return PreparedLayoutPacket(result: result, lines: drawLines)
     }
 
-    private func makeDisplayLine(from sourceLine: PreparedDrawLine) -> PreparedTextDisplayLine {
-        let alignment = resolvedAlignment(for: sourceLine.attributedText)
-        let originX = horizontalOrigin(
-            alignment: alignment,
-            lineWidth: sourceLine.fragment.paintWidth,
-            containerWidth: containerWidth
+    private func makeVisibleLine(from sourceLine: LineResult) -> PreparedDrawLine {
+        let attributed = engine.attributedLine(prepared, line: sourceLine)
+        let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
+        let fragment = engine.buildFragment(
+            for: prepared,
+            line: sourceLine,
+            attributedLine: attributed,
+            ctLine: ctLine,
+            requestedLineHeight: requestedLineHeight
         )
-        let consumedRange = prepared.nsRange(from: sourceLine.fragment.start, to: sourceLine.fragment.end)
-        let visibleRange = prepared.nsRange(from: sourceLine.fragment.start, to: sourceLine.fragment.paintEnd)
-        return PreparedTextDisplayLine(
-            fragment: sourceLine.fragment,
-            attributedText: sourceLine.attributedText,
-            ctLine: sourceLine.ctLine,
-            lineWidth: sourceLine.fragment.paintWidth,
-            originX: originX,
+        let consumedRange = prepared.nsRange(from: sourceLine.start, to: sourceLine.end)
+        let visibleRange = prepared.nsRange(from: sourceLine.start, to: sourceLine.paintEnd)
+        return PreparedDrawLine(
+            fragment: fragment,
+            attributedText: attributed,
+            ctLine: ctLine,
             isTruncated: false,
             consumedSourceUTF16Range: consumedRange,
             sourceSpans: [
                 PreparedTextSourceCoordinateSpan(
-                    displayUTF16Range: NSRange(location: 0, length: sourceLine.attributedText.length),
+                    displayUTF16Range: NSRange(location: 0, length: attributed.length),
                     sourceUTF16Range: visibleRange
                 ),
-            ]
+            ],
+            resolvedAlignment: resolvedAlignment(for: attributed)
         )
     }
 
-    private func makeFinalDisplayLine(from sourceLine: PreparedDrawLine) -> PreparedTextDisplayLine {
-        switch options.lineBreakMode {
-        case .wordWrap, .characterWrap:
-            return makeDisplayLine(from: sourceLine)
-        case .clip, .truncateHead, .truncateMiddle, .truncateTail:
-            break
-        }
-
+    private func makeFinalVisibleLine(from sourceLine: LineResult) -> PreparedDrawLine {
+        let baseLine = makeVisibleLine(from: sourceLine)
         let remainder = engine.attributedText(
             prepared,
-            from: sourceLine.fragment.start,
+            from: sourceLine.start,
             to: nil,
             flatteningHardBreaks: false
         )
         let truncationSource = truncationSourceText(from: remainder)
-        let sourceBaseOffset = prepared.utf16Offset(for: sourceLine.fragment.start)
+        let sourceBaseOffset = prepared.utf16Offset(for: sourceLine.start)
+        let consumedSourceRange = NSRange(location: sourceBaseOffset, length: truncationSource.length)
+
+        switch options.lineBreakMode {
+        case .wordWrap, .characterWrap:
+            var line = baseLine
+            line.isTruncated = true
+            line.consumedSourceUTF16Range = consumedSourceRange
+            return line
+        case .clip, .truncateHead, .truncateMiddle, .truncateTail:
+            break
+        }
+
         let forceTokenWhenFits = truncationSource.length < remainder.length
-        let tokenAttributes = truncationTokenAttributes(sourceLine: sourceLine, remainder: truncationSource)
+        let tokenAttributes = truncationTokenAttributes(sourceLine: baseLine, remainder: truncationSource)
         let composition = renderedTruncatedLine(
             source: truncationSource,
             sourceBaseOffset: sourceBaseOffset,
@@ -376,7 +430,7 @@ private struct PreparedTextDisplayLayoutBuilder {
         var descent: CGFloat = 0
         var leading: CGFloat = 0
         let measuredWidth = CGFloat(CTLineGetTypographicBounds(ctLine, &ascent, &descent, &leading))
-        var fragment = sourceLine.fragment
+        var fragment = baseLine.fragment
         fragment.fitWidth = min(layoutWidth, measuredWidth)
         fragment.paintWidth = min(layoutWidth, measuredWidth)
         fragment.trailingWhitespaceWidth = 0
@@ -384,22 +438,14 @@ private struct PreparedTextDisplayLayoutBuilder {
         fragment.descent = max(fragment.descent, descent)
         fragment.leading = max(fragment.leading, leading)
 
-        let alignment = resolvedAlignment(for: composition.attributedText)
-        let originX = horizontalOrigin(
-            alignment: alignment,
-            lineWidth: fragment.paintWidth,
-            containerWidth: containerWidth
-        )
-
-        return PreparedTextDisplayLine(
+        return PreparedDrawLine(
             fragment: fragment,
             attributedText: composition.attributedText,
             ctLine: ctLine,
-            lineWidth: fragment.paintWidth,
-            originX: originX,
             isTruncated: composition.isTruncated,
-            consumedSourceUTF16Range: prepared.nsRange(from: sourceLine.fragment.start, to: sourceLine.fragment.end),
-            sourceSpans: composition.sourceSpans
+            consumedSourceUTF16Range: consumedSourceRange,
+            sourceSpans: composition.sourceSpans,
+            resolvedAlignment: resolvedAlignment(for: composition.attributedText)
         )
     }
 
@@ -535,7 +581,11 @@ private struct PreparedTextDisplayLayoutBuilder {
             displayUTF16Range: NSRange(location: 0, length: displayed.length),
             sourceUTF16Range: NSRange(location: sourceBaseOffset + bestRange.location, length: bestRange.length)
         )
-        return TruncationComposition(attributedText: displayed, sourceSpans: bestRange.length > 0 ? [span] : [], isTruncated: bestRange.length < source.length)
+        return TruncationComposition(
+            attributedText: displayed,
+            sourceSpans: bestRange.length > 0 ? [span] : [],
+            isTruncated: bestRange.length < source.length
+        )
     }
 
     private func truncatedTailComposition(
@@ -748,18 +798,16 @@ private struct PreparedTextDisplayLayoutBuilder {
         return attributes
     }
 
-    private func resolvedAlignment(for attributedText: NSAttributedString) -> ResolvedAlignment {
+    private func resolvedAlignment(for attributedText: NSAttributedString) -> PreparedTextHorizontalAlignment {
         switch options.alignment {
         case .center:
             return .center
-        case .left:
-            return .left
+        case .left, .right:
+            return options.alignment
         case .leading:
             return resolvedDirection(for: attributedText) == .rightToLeft ? .right : .left
         case .trailing:
             return resolvedDirection(for: attributedText) == .rightToLeft ? .left : .right
-        case .right:
-            return .right
         case .natural:
             break
         }
@@ -802,23 +850,69 @@ private struct PreparedTextDisplayLayoutBuilder {
             return .leftToRight
         }
     }
+}
 
-    private func horizontalOrigin(alignment: ResolvedAlignment, lineWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
+private struct PreparedTextDisplayLayoutBuilder {
+    private let layoutPacket: PreparedLayoutPacket
+    private let containerWidth: CGFloat
+
+    init(
+        layoutPacket: PreparedLayoutPacket,
+        containerWidth: CGFloat
+    ) {
+        self.layoutPacket = layoutPacket
+        self.containerWidth = containerWidth
+    }
+
+    func build() -> PreparedTextDisplayPacket {
+        guard !layoutPacket.lines.isEmpty else {
+            return PreparedTextDisplayPacket(
+                result: layoutPacket.result,
+                lines: []
+            )
+        }
+
+        var lines: [PreparedTextDisplayLine] = []
+        lines.reserveCapacity(layoutPacket.lines.count)
+
+        for sourceLine in layoutPacket.lines {
+            lines.append(makeDisplayLine(from: sourceLine))
+        }
+
+        return PreparedTextDisplayPacket(result: layoutPacket.result, lines: lines)
+    }
+
+    private func makeDisplayLine(from sourceLine: PreparedDrawLine) -> PreparedTextDisplayLine {
+        let originX = horizontalOrigin(
+            alignment: sourceLine.resolvedAlignment,
+            lineWidth: sourceLine.fragment.paintWidth,
+            containerWidth: containerWidth
+        )
+        return PreparedTextDisplayLine(
+            fragment: sourceLine.fragment,
+            attributedText: sourceLine.attributedText,
+            ctLine: sourceLine.ctLine,
+            lineWidth: sourceLine.fragment.paintWidth,
+            originX: originX,
+            isTruncated: sourceLine.isTruncated,
+            consumedSourceUTF16Range: sourceLine.consumedSourceUTF16Range,
+            sourceSpans: sourceLine.sourceSpans
+        )
+    }
+    private func horizontalOrigin(
+        alignment: PreparedTextHorizontalAlignment,
+        lineWidth: CGFloat,
+        containerWidth: CGFloat
+    ) -> CGFloat {
         switch alignment {
         case .center:
             return max((containerWidth - lineWidth) / 2, 0)
         case .right:
             return max(containerWidth - lineWidth, 0)
-        case .left:
+        case .left, .leading, .trailing, .natural:
             return 0
         }
     }
-}
-
-private enum ResolvedAlignment {
-    case left
-    case center
-    case right
 }
 
 private struct ComposedCharacterTable {
