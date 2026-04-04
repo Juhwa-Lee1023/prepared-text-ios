@@ -1063,6 +1063,10 @@ final class PretextCoreTests: XCTestCase {
         )
 
         XCTAssertFalse(prepared.storage.core.prefersNativeLineBreaking)
+        XCTAssertNil(prepared.storage.nativeLineBreakingSource)
+        XCTAssertNil(prepared.storage.nativeTypesetter)
+        XCTAssertFalse(engine.shouldUseNativeLineBreaking(for: prepared, strategy: .nativeTypesetterPreferred))
+        XCTAssertFalse(engine.shouldUseNativeLineBreaking(for: prepared, strategy: .cjkImproved))
     }
 
     func testNativeLineBreakingNormalizesTabStopsBeforeCreatingTypesetter() {

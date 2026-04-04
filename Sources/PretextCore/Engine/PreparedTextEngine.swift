@@ -369,17 +369,18 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         let prepared = PreparedTextSignposts.measure("Stage1Prepare") {
             let sourceSnapshot = resolvedSource.copy() as? NSAttributedString ?? NSAttributedString(attributedString: resolvedSource)
             let segmenter = TextSegmenter(options: options, segmentMeasurementCache: segmentMeasurementCache)
+            let preservesSourceCoordinateSpace = segmenter.preservesSourceCoordinateSpace(for: sourceSnapshot)
             let core = PreparedTextCore(
                 segments: segmenter.segment(sourceSnapshot),
                 defaultLineHeight: segmenter.defaultLineHeight(for: sourceSnapshot),
                 tabStopAdvance: segmenter.tabStopAdvance(for: sourceSnapshot),
-                prefersNativeLineBreaking: segmenter.preservesSourceCoordinateSpace(for: sourceSnapshot)
+                prefersNativeLineBreaking: preservesSourceCoordinateSpace
                     && preferredNativeLineBreaking(for: sourceSnapshot.string)
             )
             let nativeSource = nativeLineBreakingSource(
                 from: sourceSnapshot,
                 tabStopAdvance: core.tabStopAdvance,
-                prefersNativeLineBreaking: core.prefersNativeLineBreaking
+                preservesSourceCoordinateSpace: preservesSourceCoordinateSpace
             )
             return PreparedText(
                 storage: PreparedTextStorage(
@@ -609,6 +610,11 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         for prepared: PreparedText,
         strategy: PreparedTextLineBreakStrategy
     ) -> Bool {
+        guard prepared.storage.nativeLineBreakingSource != nil,
+              prepared.storage.nativeTypesetter != nil else {
+            return false
+        }
+
         switch strategy {
         case .automatic:
             return prepared.storage.core.prefersNativeLineBreaking
@@ -754,9 +760,9 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     private func nativeLineBreakingSource(
         from source: NSAttributedString,
         tabStopAdvance: CGFloat,
-        prefersNativeLineBreaking: Bool
+        preservesSourceCoordinateSpace: Bool
     ) -> NSAttributedString? {
-        guard prefersNativeLineBreaking else {
+        guard preservesSourceCoordinateSpace else {
             return nil
         }
 
