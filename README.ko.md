@@ -157,12 +157,12 @@ swift run PretextBenchmarks
 이 저장소는 npm 의존성을 추가하지 않고 whylog scaffold만 얹어 둔 상태입니다:
 
 ```bash
-npx --yes --package whylog whylog doctor
-npx --yes --package whylog whylog commit -i
-npx --yes --package whylog whylog validate --range origin/main..HEAD --skip-unstructured --strict
+npx --yes --package whylog@0.4.0 whylog doctor
+npx --yes --package whylog@0.4.0 whylog commit -i
+npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict
 ```
 
-`validate-whylog` workflow는 저장소가 structured trailer에 점진적으로 적응하는 동안 기존 GitHub Actions 체크와 분리해서 유지합니다.
+`validate-whylog` workflow는 저장소가 structured trailer에 점진적으로 적응하는 동안 기존 GitHub Actions 체크와 분리해서 유지하고, on-demand fallback은 whylog `0.4.0` 으로 고정합니다.
 
 maintainer / 릴리즈 문서:
 

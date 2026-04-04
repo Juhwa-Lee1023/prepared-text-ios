@@ -157,12 +157,12 @@ swift run PretextBenchmarks
 whylog is scaffolded in this repository without adding npm dependencies:
 
 ```bash
-npx --yes --package whylog whylog doctor
-npx --yes --package whylog whylog commit -i
-npx --yes --package whylog whylog validate --range origin/main..HEAD --skip-unstructured --strict
+npx --yes --package whylog@0.4.0 whylog doctor
+npx --yes --package whylog@0.4.0 whylog commit -i
+npx --yes --package whylog@0.4.0 whylog validate --range origin/main..HEAD --skip-unstructured --strict
 ```
 
-The `validate-whylog` workflow stays independent from the other GitHub Actions checks while the repository adopts structured trailers gradually.
+The `validate-whylog` workflow stays independent from the other GitHub Actions checks while the repository adopts structured trailers gradually, and its on-demand fallback is pinned to whylog `0.4.0`.
 
 Maintainer and release docs:
 

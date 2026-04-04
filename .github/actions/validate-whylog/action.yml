@@ -12,7 +12,19 @@ runs:
   steps:
     - shell: bash
       run: |
+        set -euo pipefail
+
         if [ -x ./node_modules/.bin/whylog ]; then
           exec ./node_modules/.bin/whylog validate ${{ inputs.target }}
         fi
-        exec npx --yes --package whylog whylog validate ${{ inputs.target }}
+
+        temp_dir="$(mktemp -d)"
+        cleanup() {
+          rm -rf "$temp_dir"
+        }
+        trap cleanup EXIT
+
+        (
+          cd "$temp_dir"
+          exec npm exec --yes --package='whylog@0.4.0' -- whylog validate ${{ inputs.target }}
+        )

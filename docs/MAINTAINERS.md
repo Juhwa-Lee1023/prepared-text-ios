@@ -48,9 +48,10 @@ This repository keeps whylog scaffold-only:
 
 - keep the SwiftPM layout intact
 - do not add `package.json` or Node lockfiles just to run whylog
-- use `npx --yes --package whylog whylog ...` for local commands
+- use `npx --yes --package whylog@0.4.0 whylog ...` for local commands
 - keep `validate-whylog.yml` as an independent workflow until you intentionally fold it into other checks
 - keep `--skip-unstructured` enabled until the repository is ready to require structured trailers on every commit
+- keep the on-demand CLI pinned so later whylog releases do not silently change repository policy
 
 ## Labels
 
