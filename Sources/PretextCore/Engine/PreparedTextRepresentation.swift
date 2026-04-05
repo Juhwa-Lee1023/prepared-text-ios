@@ -131,44 +131,46 @@ public extension PreparedText {
 
     var tokens: [PreparedToken] {
         let attachments = attachmentSpans
-        var seenAttachmentRanges = Set<PreparedRangeKey>()
         var tokens: [PreparedToken] = []
-        var location = 0
+        let sourceString = source.string as NSString
+        var searchLocation = 0
 
         for segment in storage.core.segments {
-            let length = segment.string.utf16.count
-            let sourceRange = NSRange(location: location, length: length)
-            location += length
-
-            guard sourceRange.length > 0 else {
-                continue
-            }
-
-            if let attachment = attachments.first(where: { preparedRangesOverlap($0.sourceUTF16Range, sourceRange) }) {
-                let key = PreparedRangeKey(range: attachment.sourceUTF16Range)
-                if seenAttachmentRanges.insert(key).inserted {
-                    tokens.append(
-                        PreparedToken(
-                            kind: .attachment,
-                            sourceUTF16Range: attachment.sourceUTF16Range,
-                            sourceText: attachment.sourceText,
-                            attachmentReference: attachment.reference
-                        )
-                    )
-                }
-                continue
-            }
-
             guard let tokenKind = preparedPublicTokenKind(for: segment) else {
                 continue
             }
 
-            let sourceText = source.attributedSubstring(from: sourceRange).string
+            guard let sourceRange = preparedSourceRange(
+                forTokenText: segment.string,
+                in: sourceString,
+                startingAt: searchLocation
+            ) else {
+                continue
+            }
+
+            if attachments.contains(where: { preparedRangesOverlap($0.sourceUTF16Range, sourceRange) }) {
+                searchLocation = max(searchLocation, NSMaxRange(sourceRange))
+                continue
+            }
+
+            let sourceText = sourceString.substring(with: sourceRange)
             tokens.append(
                 PreparedToken(
                     kind: tokenKind,
                     sourceUTF16Range: sourceRange,
                     sourceText: sourceText
+                )
+            )
+            searchLocation = max(searchLocation, NSMaxRange(sourceRange))
+        }
+
+        for attachment in attachmentSpans {
+            tokens.append(
+                PreparedToken(
+                    kind: .attachment,
+                    sourceUTF16Range: attachment.sourceUTF16Range,
+                    sourceText: attachment.sourceText,
+                    attachmentReference: attachment.reference
                 )
             )
         }
@@ -304,6 +306,24 @@ private func preparedPublicTokenKind(for segment: PreparedSegment) -> PreparedTo
     case .punctuationPrefix, .punctuationSuffix, .whitespace, .tab, .softHyphen, .zeroWidthBreak, .hardBreak:
         return nil
     }
+}
+
+private func preparedSourceRange(
+    forTokenText tokenText: String,
+    in sourceString: NSString,
+    startingAt location: Int
+) -> NSRange? {
+    guard tokenText.isEmpty == false else {
+        return nil
+    }
+
+    let boundedLocation = min(max(location, 0), sourceString.length)
+    let searchRange = NSRange(location: boundedLocation, length: sourceString.length - boundedLocation)
+    let range = sourceString.range(of: tokenText, options: [], range: searchRange)
+    guard range.location != NSNotFound else {
+        return nil
+    }
+    return range
 }
 
 private func preparedLinkDestination(from value: Any?) -> String? {

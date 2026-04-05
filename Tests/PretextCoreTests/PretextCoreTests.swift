@@ -419,6 +419,24 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(annotations.last?.attachmentReference?.id, PreparedAttachmentID("token-attachment"))
     }
 
+    func testPreparedTextTokensUseOriginalSourceRangesUnderCSSNormal() {
+        let source = "Alpha   @beta\r\n#gamma"
+        let prepared = DefaultPreparedTextEngine().prepare(
+            text(source),
+            sourceID: PreparedTextSourceID("phase3-css-normal-token-source"),
+            options: PreparedTextOptions(whiteSpaceMode: .cssNormal)
+        )
+
+        let tokens = prepared.tokens
+        XCTAssertEqual(tokens.map(\.kind), [.word, .mention, .hashtag])
+        XCTAssertEqual(tokens.map(\.sourceText), ["Alpha", "@beta", "#gamma"])
+
+        let nsSource = source as NSString
+        XCTAssertEqual(tokens[0].sourceUTF16Range, nsSource.range(of: "Alpha"))
+        XCTAssertEqual(tokens[1].sourceUTF16Range, nsSource.range(of: "@beta"))
+        XCTAssertEqual(tokens[2].sourceUTF16Range, nsSource.range(of: "#gamma"))
+    }
+
     func testVisibleTokensAndAnnotationsFollowTruncatedCoordinateMap() {
         let attributed = NSMutableAttributedString(
             string: "Visible #first\nHidden @second",
