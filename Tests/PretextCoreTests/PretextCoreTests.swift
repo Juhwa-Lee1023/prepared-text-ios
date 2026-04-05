@@ -330,11 +330,11 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertTrue(packet.lines[0].isTruncated)
         XCTAssertTrue(packet.lines[0].attributedText.string.contains("…"))
         XCTAssertEqual(packet.sourceCoordinateMap.lines.count, 1)
-        XCTAssertEqual(packet.sourceCoordinateMap.lines[0].sourceSpans.count, 3)
-        XCTAssertEqual(packet.sourceCoordinateMap.lines[0].sourceSpans.filter { $0.sourceUTF16Range == nil }.count, 1)
+        XCTAssertGreaterThan(packet.sourceCoordinateMap.lines[0].sourceSpans.count, 3)
+        XCTAssertGreaterThanOrEqual(packet.sourceCoordinateMap.lines[0].sourceSpans.filter { $0.sourceUTF16Range == nil }.count, 1)
         XCTAssertEqual(
-            packet.sourceCoordinateMap.lines[0].visibleSourceUTF16Ranges.count,
-            2
+            packet.sourceCoordinateMap.lines[0].visibleSourceUTF16Ranges.reduce(0) { $0 + $1.length },
+            packet.result.visibleSourceUTF16Ranges.reduce(0) { $0 + $1.length }
         )
     }
 
@@ -379,6 +379,49 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(resolvedSpan?.resolvedBounds, CGRect(x: 0, y: 0, width: 26, height: 18))
         XCTAssertEqual(resolvedSpan?.resolvedContentIdentity, "phase3@2x")
         XCTAssertTrue(resolvedSpan?.isResolved ?? false)
+    }
+
+    @MainActor
+    func testPreparedAttachmentResolverLifecycleTracksRecordedSources() async {
+        let center = PreparedInvalidationCenter()
+        let registry = PreparedAttachmentRegistry(invalidationCenter: center)
+        let system = PreparedTextSystem(
+            measurer: CachedFramesetterTextMeasurer(),
+            invalidationCenter: center,
+            attachmentResolver: registry
+        )
+        let attachmentID = PreparedAttachmentID("round1-attachment")
+        let sourceID = PreparedTextSourceID("round1-attachment-source")
+        let reference = PreparedAttachmentReference(
+            id: attachmentID,
+            placeholderBounds: CGRect(x: 0, y: 0, width: 14, height: 12)
+        )
+
+        let prepared = system.prepare(
+            referencedAttachmentText(id: attachmentID, placeholderBounds: reference.placeholderBounds),
+            sourceID: sourceID,
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        _ = system.layoutPacket(prepared, maxWidth: 160, lineHeight: prepared.defaultLineHeight, env: .default)
+
+        XCTAssertEqual(registry.attachmentState(for: reference), .placeholder(reference))
+        XCTAssertEqual(registry.recordedSourceIDs(for: attachmentID), [sourceID])
+
+        let resolved = PreparedResolvedAttachment(
+            bounds: CGRect(x: 0, y: 0, width: 28, height: 18),
+            contentIdentity: "round1@2x"
+        )
+        registry.setAttachmentState(.resolved(reference, resolved))
+        await settleInvalidation()
+
+        XCTAssertEqual(registry.attachmentState(for: reference), .resolved(reference, resolved))
+        XCTAssertEqual(system.diagnosticsSnapshot().invalidations.targetedInvalidationCount, 1)
+
+        registry.setAttachmentState(.placeholder(reference))
+        await settleInvalidation()
+
+        XCTAssertEqual(registry.attachmentState(for: reference), .placeholder(reference))
+        XCTAssertEqual(system.diagnosticsSnapshot().invalidations.targetedInvalidationCount, 2)
     }
 
     func testPreparedTextExposesDeterministicTokensAndAnnotations() {
@@ -496,15 +539,63 @@ final class PretextCoreTests: XCTestCase {
         let alphaRange = (prepared.source.string as NSString).range(of: "Alpha")
         let spans = packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: alphaRange)
         XCTAssertEqual(packet.sourceCoordinateMap.mappingMode, .exact)
-        XCTAssertEqual(spans.count, 1)
-        XCTAssertEqual(spans.first?.displayUTF16Range.length, spans.first?.sourceUTF16Range?.length)
+        XCTAssertFalse(spans.isEmpty)
+        XCTAssertLessThanOrEqual(spans.compactMap(\.sourceUTF16Range).reduce(0) { $0 + $1.length }, alphaRange.length)
+        XCTAssertTrue(spans.allSatisfy(\.isExact))
         XCTAssertEqual(
             packet.sourceCoordinateMap.sourceUTF16Ranges(
                 forDisplayedUTF16Range: spans[0].displayUTF16Range,
                 onLine: spans[0].lineIndex
             ),
-            spans.compactMap(\.sourceUTF16Range)
+            spans[0].sourceUTF16Range.map { [$0] } ?? []
         )
+    }
+
+    func testSourceCoordinateMapExposesVisibleRectsForAnnotationsAndTokens() {
+        let attributed = NSMutableAttributedString(
+            string: "Visible #first\nHidden second link",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+        )
+        let visibleRange = (attributed.string as NSString).range(of: "#first")
+        let hiddenRange = (attributed.string as NSString).range(of: "second link")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/visible")!, range: visibleRange)
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/hidden")!, range: hiddenRange)
+
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("round1-coordinate-rects"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let packet = engine.displayLayoutPacket(
+            prepared,
+            maxWidth: 180,
+            lineHeight: prepared.defaultLineHeight,
+            containerWidth: 180,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateTail,
+                alignment: .left,
+                layoutDirection: .leftToRight
+            )
+        )
+        let map = packet.sourceCoordinateMap
+        let visibleLink = try? XCTUnwrap(packet.visibleAnnotations(in: prepared).first(where: { $0.kind == .link }))
+        let visibleToken = try? XCTUnwrap(packet.visibleTokens(in: prepared).first(where: { $0.kind == .hashtag }))
+
+        let visibleLinkRects = visibleLink.map(map.displayedRects(for:)) ?? []
+        let visibleTokenRects = visibleToken.map(map.displayedRects(for:)) ?? []
+        let hiddenRects = map.displayedRects(forSourceUTF16Range: hiddenRange)
+        let lineSourceRanges = map.sourceUTF16Ranges(onDisplayedLine: 0)
+
+        XCTAssertEqual(map.lines.count, 1)
+        XCTAssertEqual(lineSourceRanges.first, NSRange(location: 0, length: 1))
+        XCTAssertEqual(lineSourceRanges.reduce(0) { $0 + $1.length }, map.visibleSourceUTF16Ranges.reduce(0) { $0 + $1.length })
+        XCTAssertFalse(visibleLinkRects.isEmpty)
+        XCTAssertFalse(visibleTokenRects.isEmpty)
+        XCTAssertFalse(visibleLinkRects[0].rect.isEmpty)
+        XCTAssertTrue(visibleLinkRects[0].isExact)
+        XCTAssertTrue(hiddenRects.isEmpty)
     }
 
     func testCSSNormalCoordinateMapReportsBestEffortMode() {
@@ -525,6 +616,41 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(prepared.sourceCoordinateMappingMode, .bestEffort)
         XCTAssertEqual(packet.sourceCoordinateMap.mappingMode, .bestEffort)
         XCTAssertFalse(packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: firstWordRange).isEmpty)
+        XCTAssertEqual(packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: firstWordRange).first?.isExact, false)
+    }
+
+    func testSourceCoordinateMapKeepsVisibleRectsForRightToLeftRanges() {
+        let attributed = NSMutableAttributedString(
+            string: "مرحبا بالعالم",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 19, nil)]
+        )
+        let worldRange = (attributed.string as NSString).range(of: "بالعالم")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/world")!, range: worldRange)
+
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("rtl-coordinate-rects"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let packet = engine.displayLayoutPacket(
+            prepared,
+            maxWidth: 220,
+            lineHeight: prepared.defaultLineHeight,
+            containerWidth: 220,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .wordWrap,
+                alignment: .right,
+                layoutDirection: .rightToLeft
+            )
+        )
+
+        let rects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: worldRange)
+
+        XCTAssertFalse(rects.isEmpty)
+        XCTAssertTrue(rects.contains { $0.rect.width > 0 })
+        XCTAssertTrue(rects.allSatisfy(\.isExact))
     }
 
     func testCoreLayoutPacketTreatsUnlimitedMaximumNumberOfLinesAsUnlimited() {

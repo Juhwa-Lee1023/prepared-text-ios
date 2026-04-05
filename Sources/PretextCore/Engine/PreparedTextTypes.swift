@@ -179,16 +179,40 @@ public struct PreparedLayoutPacket {
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
-        PreparedTextSourceCoordinateMap(
+        let containerWidth = max(result.maxPaintWidth, 0)
+        var originY: CGFloat = 0
+        return PreparedTextSourceCoordinateMap(
             mappingMode: sourceCoordinateMappingMode,
             lines: lines.enumerated().map { index, line in
-                PreparedTextSourceCoordinateLine(
+                defer { originY += line.fragment.blockAdvance }
+                let lineWidth = line.fragment.paintWidth
+                let originX = preparedCoordinateHorizontalOrigin(
+                    alignment: line.resolvedAlignment,
+                    lineWidth: lineWidth,
+                    containerWidth: containerWidth
+                )
+                let displayFrame = preparedCoordinateDisplayFrame(
+                    originX: originX,
+                    originY: originY,
+                    lineWidth: lineWidth,
+                    fragment: line.fragment
+                )
+                return PreparedTextSourceCoordinateLine(
                     lineIndex: index,
                     fragment: line.fragment,
                     displayUTF16Length: line.attributedText.length,
                     consumedSourceUTF16Range: line.consumedSourceUTF16Range,
-                    sourceSpans: line.sourceSpans,
-                    isTruncated: line.isTruncated
+                    sourceSpans: preparedCoordinateSpans(
+                        from: line.sourceSpans,
+                        attributedText: line.attributedText,
+                        ctLine: line.ctLine,
+                        originX: originX,
+                        originY: originY,
+                        lineWidth: lineWidth,
+                        fragment: line.fragment
+                    ),
+                    isTruncated: line.isTruncated,
+                    displayFrame: displayFrame
                 )
             }
         )

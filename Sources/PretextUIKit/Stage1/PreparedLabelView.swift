@@ -350,6 +350,7 @@ public final class PreparedLabelView: UIView {
         isOpaque = false
         contentMode = .redraw
         isAccessibilityElement = true
+        shouldGroupAccessibilityChildren = true
         isUserInteractionEnabled = true
         accessibilityTraits.insert(.staticText)
         tapGestureRecognizer.cancelsTouchesInView = false
@@ -477,21 +478,38 @@ public final class PreparedLabelView: UIView {
         return resolved
     }
 
-    private func visibleLinks() -> [AttributedLink] {
-        let layoutWidth = resolvedDrawWidth()
-        let containerWidth = bounds.width > 0 ? bounds.width : layoutWidth
-        guard let packet = resolvedDisplayPacket(layoutWidth: layoutWidth, containerWidth: containerWidth) else {
-            return resolvedInputText()?.links() ?? []
+    private func visibleLinks() -> [PreparedVisibleLink] {
+        guard let inputText = resolvedInputText() else {
+            return []
         }
 
-        var links: [AttributedLink] = []
-        var seenURLs = Set<URL>()
-        for line in packet.lines {
-            for link in line.attributedText.links() where seenURLs.insert(link.url).inserted {
-                links.append(link)
-            }
+        let layoutWidth = resolvedDrawWidth()
+        let containerWidth = bounds.width > 0 ? bounds.width : layoutWidth
+        guard
+            let prepared = resolvedPreparedText(),
+            let packet = resolvedDisplayPacket(layoutWidth: layoutWidth, containerWidth: containerWidth)
+        else {
+            return inputText.links().map(PreparedVisibleLink.init(link:))
         }
-        return links
+
+        let map = packet.sourceCoordinateMap
+        return map.visibleAnnotations(in: prepared)
+            .filter { $0.kind == .link }
+            .compactMap { annotation in
+                guard
+                    let destination = annotation.linkDestination,
+                    let url = URL(string: destination)
+                else {
+                    return nil
+                }
+
+                return PreparedVisibleLink(
+                    range: annotation.sourceUTF16Range,
+                    url: url,
+                    title: annotation.sourceText,
+                    displayedRects: map.displayedRects(for: annotation)
+                )
+            }
     }
 
     private func activate(url: URL) -> Bool {
@@ -525,6 +543,8 @@ public final class PreparedLabelView: UIView {
     }
 
     private func updateAccessibilityMetadata() {
+        accessibilityElements = nil
+        isAccessibilityElement = true
         accessibilityLabel = resolvedInputText()?.string
         accessibilityValue = nil
         accessibilityHint = nil
@@ -544,6 +564,14 @@ public final class PreparedLabelView: UIView {
             return
         }
 
+        if links.count > 1,
+           let accessibilityElements = accessibilityElements(for: attributedText, links: links) {
+            isAccessibilityElement = false
+            accessibilityTraits.remove(.link)
+            self.accessibilityElements = accessibilityElements
+            return
+        }
+
         if links.count == 1, links[0].range == NSRange(location: 0, length: attributedText.length) {
             accessibilityTraits.insert(.link)
         } else {
@@ -556,6 +584,36 @@ public final class PreparedLabelView: UIView {
                 self?.activate(url: link.url) ?? false
             }
         }
+    }
+
+    private func accessibilityElements(
+        for attributedText: NSAttributedString,
+        links: [PreparedVisibleLink]
+    ) -> [Any]? {
+        let linkElements = links.compactMap { link -> PreparedLabelLinkAccessibilityElement? in
+            guard let frame = link.accessibilityFrameInContainerSpace else {
+                return nil
+            }
+
+            let element = PreparedLabelLinkAccessibilityElement(container: self) { [weak self] in
+                self?.activate(url: link.url) ?? false
+            }
+            element.accessibilityLabel = link.title.isEmpty ? link.url.absoluteString : link.title
+            element.accessibilityTraits = [.link]
+            element.accessibilityFrameInContainerSpace = frame
+            return element
+        }
+
+        guard linkElements.count == links.count else {
+            return nil
+        }
+
+        let summaryElement = UIAccessibilityElement(accessibilityContainer: self)
+        summaryElement.accessibilityLabel = attributedText.string
+        summaryElement.accessibilityAttributedLabel = attributedText
+        summaryElement.accessibilityTraits = [.staticText]
+        summaryElement.accessibilityFrameInContainerSpace = bounds
+        return [summaryElement] + linkElements
     }
 
     private func updateConfiguration(_ mutate: (inout PreparedLabelConfiguration) -> Void) {
@@ -663,6 +721,57 @@ private struct AttributedLink {
     var range: NSRange
     var url: URL
     var title: String
+}
+
+private struct PreparedVisibleLink: Hashable {
+    var range: NSRange
+    var url: URL
+    var title: String
+    var displayedRects: [PreparedTextDisplayedRect]
+
+    init(
+        range: NSRange,
+        url: URL,
+        title: String,
+        displayedRects: [PreparedTextDisplayedRect]
+    ) {
+        self.range = range
+        self.url = url
+        self.title = title
+        self.displayedRects = displayedRects
+    }
+
+    init(link: AttributedLink) {
+        self.init(
+            range: link.range,
+            url: link.url,
+            title: link.title,
+            displayedRects: []
+        )
+    }
+
+    var accessibilityFrameInContainerSpace: CGRect? {
+        let unionRect = displayedRects.reduce(into: CGRect.null) { partialResult, displayedRect in
+            partialResult = partialResult.union(displayedRect.rect)
+        }
+        guard unionRect.isNull == false, unionRect.isEmpty == false else {
+            return nil
+        }
+        return unionRect.insetBy(dx: -2, dy: -2)
+    }
+}
+
+private final class PreparedLabelLinkAccessibilityElement: UIAccessibilityElement {
+    private let activationHandler: () -> Bool
+
+    init(container: Any, activationHandler: @escaping () -> Bool) {
+        self.activationHandler = activationHandler
+        super.init(accessibilityContainer: container)
+    }
+
+    override func accessibilityActivate() -> Bool {
+        activationHandler()
+    }
 }
 
 public struct PreparedTextUIKitExampleItem: Hashable {

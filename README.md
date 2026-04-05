@@ -149,12 +149,12 @@ It now behaves like a reusable layout engine for read-only repeated-width surfac
 - public pixel-aligned measurement through `PreparedTextMeasurementOptions`
 - explicit invalidation through `PreparedInvalidationCenter`
 - public diagnostics through `PreparedTextDiagnosticsSnapshot`
-- attachment-aware inline prepared layout through `PreparedAttachmentRegistry`
+- attachment-aware inline prepared layout through `PreparedAttachmentResolver` and `PreparedAttachmentRegistry`
 - core-owned finite-line display policy through `PreparedTextLayoutOptions`
 - public line-break strategy selection through `PreparedTextLineBreakStrategy`
 - public prepared-structure inspection through `PreparedToken`, `PreparedAnnotation`, and `PreparedAttachmentSpan`
-- practical source/display conversion through `PreparedTextSourceCoordinateMap`
-- reusable circle-obstacle layout through `PreparedTextObstacleLayouter` and `PreparedObstacle`
+- practical source/display conversion and rect queries through `PreparedTextSourceCoordinateMap`
+- reusable circle / rounded-rect obstacle layout through `PreparedTextObstacleLayouter` and `PreparedObstacle`
 
 Example:
 
@@ -195,6 +195,7 @@ let coordinateMap = packet.sourceCoordinateMap
 let tokens = packet.visibleTokens(in: prepared)
 let annotations = packet.visibleAnnotations(in: prepared)
 let attachmentSpans = packet.visibleAttachmentSpans(in: prepared)
+let linkRects = annotations.first.map { coordinateMap.displayedRects(for: $0) } ?? []
 ```
 
 Use exact widths when visual parity matters more than cache reuse.
@@ -216,14 +217,16 @@ That means a 2-line tail-truncated feed card now has its own prepared layout key
 
 Phase 3 builds on that ownership model with four narrow public differentiators:
 
-- attachment-aware prepared layout through placeholder metrics, resolved metrics, attachment identity, and targeted invalidation in `PreparedAttachmentRegistry`
+- attachment-aware prepared layout through placeholder metrics, resolved metrics, attachment identity, and targeted invalidation in `PreparedAttachmentResolver` / `PreparedAttachmentRegistry`
 - prepared token and annotation inspection through `PreparedText.tokens`, `PreparedText.annotations`, and `PreparedText.attachmentSpans`
-- source/display coordinate conversion through `PreparedTextSourceCoordinateMap`
-- circle-only exclusion layout through `PreparedTextObstacleLayouter`
+- source/display coordinate conversion and visible rect queries through `PreparedTextSourceCoordinateMap`
+- per-link accessibility elements in `PreparedLabelView` when multiple visible links remain on screen
+- circle and rounded-rect exclusion layout through `PreparedTextObstacleLayouter`
 
 Attachment support now means:
 
 - inline read-only attachments can contribute placeholder bounds before real metrics are available
+- `PreparedAttachmentResolver` exposes the placeholder vs resolved lifecycle directly, while `PreparedAttachmentRegistry` remains the default shared adapter
 - resolved metrics and content identity participate in prepared layout reuse
 - registry updates can target only the affected prepared source IDs for invalidation
 - Stage 1 renderers consume those resolved metrics without pretending to be a full async media framework
@@ -232,17 +235,19 @@ Token and annotation APIs are intentionally narrow:
 
 - links, mentions, hashtags, attachment spans, and prepared word-like spans can be inspected deterministically
 - visible token and annotation filtering works through the packet or coordinate map after truncation
+- `PreparedTextSourceCoordinateMap.displayedRects(...)` can turn those ranges back into visible rects for interaction, analytics, debug overlays, and accessibility scaffolding
 - the package still does not become an editor model, syntax highlighter framework, or generalized NLP/entity system
 
 Coordinate mapping is also explicit about exactness:
 
 - coordinate-preserving modes expose `.exact` mapping
 - whitespace-normalizing modes expose `.bestEffort` mapping instead of pretending reverse conversion is perfect
-- packet and map helpers can translate source UTF-16 ranges to displayed spans, visible lines, and back where the prepared representation preserves enough information
+- packet and map helpers can translate source UTF-16 ranges to displayed spans, visible lines, visible rects, and back where the prepared representation preserves enough information
+- `PreparedLabelView` builds its multi-link accessibility geometry from that same prepared representation, and falls back to container-level custom actions only when separate visible elements cannot be formed safely
 
 Obstacle-aware layout remains intentionally narrow:
 
-- `PreparedTextObstacleLayouter` is for repeated-width read-only layout around circle exclusion zones
+- `PreparedTextObstacleLayouter` is for repeated-width read-only layout around circle or rounded-rect exclusion zones
 - it fits card, avatar, and decorative avoidance scenarios
 - it does not claim arbitrary publication layout, scene-graph composition, or browser-grade flowing text
 

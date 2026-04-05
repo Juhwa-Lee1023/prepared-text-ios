@@ -13,8 +13,19 @@ public struct PreparedTextObstacleCircle: Hashable {
     }
 }
 
+public struct PreparedTextObstacleRoundedRect: Hashable {
+    public var rect: CGRect
+    public var cornerRadius: CGFloat
+
+    public init(rect: CGRect, cornerRadius: CGFloat) {
+        self.rect = rect
+        self.cornerRadius = max(cornerRadius, 0)
+    }
+}
+
 public enum PreparedObstacleShape: Hashable {
     case circle(PreparedTextObstacleCircle)
+    case roundedRect(PreparedTextObstacleRoundedRect)
 }
 
 public struct PreparedObstacle: Hashable {
@@ -28,10 +39,25 @@ public struct PreparedObstacle: Hashable {
         self.shape = .circle(circle)
     }
 
+    public init(roundedRect: PreparedTextObstacleRoundedRect) {
+        self.shape = .roundedRect(roundedRect)
+    }
+
     public var circle: PreparedTextObstacleCircle? {
         switch shape {
         case let .circle(circle):
             return circle
+        case .roundedRect:
+            return nil
+        }
+    }
+
+    public var roundedRect: PreparedTextObstacleRoundedRect? {
+        switch shape {
+        case .circle:
+            return nil
+        case let .roundedRect(roundedRect):
+            return roundedRect
         }
     }
 }
@@ -145,29 +171,39 @@ public struct PreparedTextObstacleLayoutResult {
             lines: fragments.enumerated().map { index, fragment in
                 let start = prepared.cursor(forUTF16Offset: fragment.sourceUTF16Range.location)
                 let end = prepared.cursor(forUTF16Offset: NSMaxRange(fragment.sourceUTF16Range))
+                let lineFragment = preparedObstacleLineFragment(
+                    start: start,
+                    end: end,
+                    spanWidth: fragment.spanWidth,
+                    ascent: fragment.ascent,
+                    descent: fragment.descent,
+                    leading: fragment.leading,
+                    rowHeight: rowHeight
+                )
+                let displayFrame = preparedObstacleCoordinateDisplayFrame(
+                    originX: fragment.originX,
+                    originY: fragment.rowY,
+                    lineWidth: fragment.spanWidth,
+                    fragment: lineFragment
+                )
+                let sourceSpans = preparedObstacleCoordinateSpans(
+                    attributedText: fragment.attributedText,
+                    sourceUTF16Range: fragment.sourceUTF16Range,
+                    mappingMode: prepared.sourceCoordinateMappingMode,
+                    ctLine: fragment.ctLine,
+                    originX: fragment.originX,
+                    originY: fragment.rowY,
+                    lineWidth: fragment.spanWidth,
+                    fragment: lineFragment
+                )
                 return PreparedTextSourceCoordinateLine(
                     lineIndex: index,
-                    fragment: LineFragment(
-                        start: start,
-                        end: end,
-                        paintEnd: end,
-                        fitWidth: fragment.spanWidth,
-                        paintWidth: fragment.spanWidth,
-                        trailingWhitespaceWidth: 0,
-                        ascent: fragment.ascent,
-                        descent: fragment.descent,
-                        leading: fragment.leading,
-                        blockAdvance: rowHeight
-                    ),
+                    fragment: lineFragment,
                     displayUTF16Length: fragment.attributedText.length,
                     consumedSourceUTF16Range: fragment.sourceUTF16Range,
-                    sourceSpans: [
-                        PreparedTextSourceCoordinateSpan(
-                            displayUTF16Range: NSRange(location: 0, length: fragment.attributedText.length),
-                            sourceUTF16Range: fragment.sourceUTF16Range
-                        ),
-                    ],
-                    isTruncated: false
+                    sourceSpans: sourceSpans,
+                    isTruncated: false,
+                    displayFrame: displayFrame
                 )
             }
         )
@@ -245,7 +281,7 @@ public final class PreparedTextObstacleLayouter {
             let spans = availableSpans(
                 in: bandRect,
                 textRect: textRect,
-                obstacles: circles,
+                obstacles: obstacles,
                 obstaclePadding: obstaclePadding,
                 minimumSpanWidth: minimumSpanWidth
             )
@@ -344,7 +380,7 @@ public final class PreparedTextObstacleLayouter {
     private func availableSpans(
         in bandRect: CGRect,
         textRect: CGRect,
-        obstacles: [PreparedTextObstacleCircle],
+        obstacles: [PreparedObstacle],
         obstaclePadding: CGFloat,
         minimumSpanWidth: CGFloat
     ) -> [PreparedTextObstacleHorizontalSpan] {
@@ -382,26 +418,64 @@ public final class PreparedTextObstacleLayouter {
     private func mergedExclusionIntervals(
         in bandRect: CGRect,
         textRect: CGRect,
-        obstacles: [PreparedTextObstacleCircle],
+        obstacles: [PreparedObstacle],
         obstaclePadding: CGFloat
     ) -> [PreparedTextObstacleHorizontalSpan] {
         let midY = bandRect.midY
         var intervals: [PreparedTextObstacleHorizontalSpan] = []
 
         for obstacle in obstacles {
-            let layoutRadius = obstacle.radius + obstaclePadding
-            let distanceY = abs(midY - obstacle.center.y)
-            guard distanceY < layoutRadius else {
-                continue
-            }
+            switch obstacle.shape {
+            case let .circle(circle):
+                let layoutRadius = circle.radius + obstaclePadding
+                let distanceY = abs(midY - circle.center.y)
+                guard distanceY < layoutRadius else {
+                    continue
+                }
 
-            let deltaX = sqrt(max((layoutRadius * layoutRadius) - (distanceY * distanceY), 0))
-            let minX = max(textRect.minX, obstacle.center.x - deltaX)
-            let maxX = min(textRect.maxX, obstacle.center.x + deltaX)
-            guard maxX - minX > 0 else {
-                continue
+                let deltaX = sqrt(max((layoutRadius * layoutRadius) - (distanceY * distanceY), 0))
+                let minX = max(textRect.minX, circle.center.x - deltaX)
+                let maxX = min(textRect.maxX, circle.center.x + deltaX)
+                guard maxX - minX > 0 else {
+                    continue
+                }
+                intervals.append(PreparedTextObstacleHorizontalSpan(minX: minX, maxX: maxX))
+            case let .roundedRect(roundedRect):
+                let layoutRect = roundedRect.rect.insetBy(dx: -obstaclePadding, dy: -obstaclePadding)
+                guard layoutRect.minY < midY, midY < layoutRect.maxY else {
+                    continue
+                }
+
+                let cornerRadius = min(
+                    max(roundedRect.cornerRadius + obstaclePadding, 0),
+                    min(layoutRect.width, layoutRect.height) / 2
+                )
+                var minX = layoutRect.minX
+                var maxX = layoutRect.maxX
+
+                if cornerRadius > 0 {
+                    let topCornerCenterY = layoutRect.minY + cornerRadius
+                    let bottomCornerCenterY = layoutRect.maxY - cornerRadius
+                    if midY < topCornerCenterY {
+                        let distanceY = topCornerCenterY - midY
+                        let deltaX = sqrt(max((cornerRadius * cornerRadius) - (distanceY * distanceY), 0))
+                        minX = layoutRect.minX + cornerRadius - deltaX
+                        maxX = layoutRect.maxX - cornerRadius + deltaX
+                    } else if midY > bottomCornerCenterY {
+                        let distanceY = midY - bottomCornerCenterY
+                        let deltaX = sqrt(max((cornerRadius * cornerRadius) - (distanceY * distanceY), 0))
+                        minX = layoutRect.minX + cornerRadius - deltaX
+                        maxX = layoutRect.maxX - cornerRadius + deltaX
+                    }
+                }
+
+                minX = max(textRect.minX, minX)
+                maxX = min(textRect.maxX, maxX)
+                guard maxX - minX > 0 else {
+                    continue
+                }
+                intervals.append(PreparedTextObstacleHorizontalSpan(minX: minX, maxX: maxX))
             }
-            intervals.append(PreparedTextObstacleHorizontalSpan(minX: minX, maxX: maxX))
         }
 
         let sorted = intervals.sorted { lhs, rhs in
@@ -438,4 +512,135 @@ private struct PreparedTextObstacleHorizontalSpan: Hashable {
     var width: CGFloat {
         max(maxX - minX, 0)
     }
+}
+
+private func preparedObstacleLineFragment(
+    start: LayoutCursor,
+    end: LayoutCursor,
+    spanWidth: CGFloat,
+    ascent: CGFloat,
+    descent: CGFloat,
+    leading: CGFloat,
+    rowHeight: CGFloat
+) -> LineFragment {
+    LineFragment(
+        start: start,
+        end: end,
+        paintEnd: end,
+        fitWidth: spanWidth,
+        paintWidth: spanWidth,
+        trailingWhitespaceWidth: 0,
+        ascent: ascent,
+        descent: descent,
+        leading: leading,
+        blockAdvance: rowHeight
+    )
+}
+
+private func preparedObstacleCoordinateDisplayFrame(
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> CGRect {
+    let typographicTop = originY + fragment.paragraphSpacingBefore
+    let typographicHeight = max(fragment.ascent + fragment.descent + fragment.leading, 1)
+    return CGRect(x: originX, y: typographicTop, width: lineWidth, height: typographicHeight)
+}
+
+private func preparedObstacleCoordinateRect(
+    for displayUTF16Range: NSRange,
+    ctLine: CTLine,
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> CGRect? {
+    guard displayUTF16Range.length > 0 else {
+        return nil
+    }
+
+    let lineLength = CTLineGetStringRange(ctLine).length
+    let displayEnd = min(NSMaxRange(displayUTF16Range), lineLength)
+    let displayStart = min(max(displayUTF16Range.location, 0), displayEnd)
+    guard displayEnd > displayStart else {
+        return nil
+    }
+
+    let localStart = CGFloat(CTLineGetOffsetForStringIndex(ctLine, displayStart, nil))
+    let localEnd: CGFloat
+    if displayEnd >= lineLength {
+        localEnd = lineWidth
+    } else {
+        localEnd = CGFloat(CTLineGetOffsetForStringIndex(ctLine, displayEnd, nil))
+    }
+
+    let rect = preparedObstacleCoordinateDisplayFrame(
+        originX: originX + min(localStart, localEnd),
+        originY: originY,
+        lineWidth: abs(localEnd - localStart),
+        fragment: fragment
+    )
+    return rect.isNull || rect.isEmpty ? nil : rect
+}
+
+private func preparedObstacleCoordinateSpans(
+    attributedText: NSAttributedString,
+    sourceUTF16Range: NSRange,
+    mappingMode: PreparedTextSourceCoordinateMappingMode,
+    ctLine: CTLine,
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> [PreparedTextSourceCoordinateSpan] {
+    let displayRange = NSRange(location: 0, length: attributedText.length)
+    guard displayRange.length > 0 else {
+        return []
+    }
+
+    guard mappingMode == .exact, sourceUTF16Range.length == displayRange.length else {
+        return [
+            PreparedTextSourceCoordinateSpan(
+                displayUTF16Range: displayRange,
+                sourceUTF16Range: sourceUTF16Range,
+                displayRect: preparedObstacleCoordinateRect(
+                    for: displayRange,
+                    ctLine: ctLine,
+                    originX: originX,
+                    originY: originY,
+                    lineWidth: lineWidth,
+                    fragment: fragment
+                )
+            ),
+        ]
+    }
+
+    let string = attributedText.string as NSString
+    var spans: [PreparedTextSourceCoordinateSpan] = []
+    var index = 0
+    while index < string.length {
+        let localRange = string.rangeOfComposedCharacterSequence(at: index)
+        let sourceRange = NSRange(
+            location: sourceUTF16Range.location + localRange.location,
+            length: localRange.length
+        )
+        spans.append(
+            PreparedTextSourceCoordinateSpan(
+                displayUTF16Range: localRange,
+                sourceUTF16Range: sourceRange,
+                displayRect: preparedObstacleCoordinateRect(
+                    for: localRange,
+                    ctLine: ctLine,
+                    originX: originX,
+                    originY: originY,
+                    lineWidth: lineWidth,
+                    fragment: fragment
+                )
+            )
+        )
+        index = NSMaxRange(localRange)
+    }
+
+    return spans
 }

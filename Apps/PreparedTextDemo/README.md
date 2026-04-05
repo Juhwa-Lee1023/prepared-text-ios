@@ -14,8 +14,9 @@ Its XCTest gate covers the supported simulator baseline subset while the broader
 The current showcase also includes narrow public differentiators that sit on top of the prepared layout engine:
 
 - prepared structure inspection with inline attachment, link, mention, and hashtag content
+- attachment resolver state and multi-link accessibility behavior through `PreparedLabelView`
 - source-coordinate-map-driven visible span inspection
-- circle-obstacle exclusion layout for read-only prepared surfaces
+- circle-obstacle interaction demos for read-only prepared surfaces, with rounded-rect obstacle coverage kept in host validation and benchmark fixtures
 
 ## Open in Xcode
 

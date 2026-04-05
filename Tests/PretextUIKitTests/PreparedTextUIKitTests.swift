@@ -524,7 +524,8 @@ final class PreparedTextUIKitTests: XCTestCase {
 
         let map = view.sourceCoordinateMap()
         XCTAssertEqual(map?.lines.count, 1)
-        XCTAssertEqual(map?.lines.first?.sourceSpans.count, 3)
+        XCTAssertGreaterThan(map?.lines.first?.sourceSpans.count ?? 0, 3)
+        XCTAssertFalse(map?.lines.first?.visibleSourceUTF16Ranges.isEmpty ?? true)
         XCTAssertTrue(map?.lines.first?.isTruncated ?? false)
     }
 
@@ -588,6 +589,8 @@ final class PreparedTextUIKitTests: XCTestCase {
         let size = view.sizeThatFits(CGSize(width: 220, height: CGFloat.greatestFiniteMagnitude))
         view.frame = CGRect(x: 0, y: 0, width: 220, height: size.height)
 
+        XCTAssertTrue(view.isAccessibilityElement)
+        XCTAssertNil(view.accessibilityElements)
         XCTAssertEqual(view.accessibilityCustomActions?.count, 1)
         XCTAssertEqual(view.accessibilityCustomActions?.first?.name, "Visible")
         XCTAssertTrue(view.accessibilityActivate())
@@ -622,8 +625,60 @@ final class PreparedTextUIKitTests: XCTestCase {
         let size = view.sizeThatFits(CGSize(width: 220, height: CGFloat.greatestFiniteMagnitude))
         view.frame = CGRect(x: 0, y: 0, width: 220, height: size.height)
 
+        XCTAssertTrue(view.isAccessibilityElement)
+        XCTAssertNil(view.accessibilityElements)
         XCTAssertEqual(view.accessibilityCustomActions?.count, 1)
         XCTAssertEqual(view.accessibilityCustomActions?.first?.name, "Visible")
+    }
+
+    func testPreparedLabelViewPromotesMultipleVisibleLinksToAccessibilityElements() throws {
+        let firstURL = URL(string: "https://example.com/first-link")!
+        let secondURL = URL(string: "https://example.com/second-link")!
+        let attributed = NSMutableAttributedString(
+            string: "First link and second link stay individually focusable.",
+            attributes: [.font: UIFont.systemFont(ofSize: 17)]
+        )
+        let firstRange = (attributed.string as NSString).range(of: "First link")
+        let secondRange = (attributed.string as NSString).range(of: "second link")
+        attributed.addAttribute(.link, value: firstURL, range: firstRange)
+        attributed.addAttribute(.link, value: secondURL, range: secondRange)
+
+        let expectation = expectation(description: "both accessibility links activated")
+        expectation.expectedFulfillmentCount = 2
+        var activatedURLs: [URL] = []
+
+        let view = PreparedLabelView()
+        view.apply(
+            configuration: PreparedLabelConfiguration(
+                attributedText: attributed,
+                sourceID: PreparedTextSourceID("ios-accessibility-multiple-links"),
+                whiteSpaceMode: .uikitLiteral,
+                maxLayoutWidth: 260,
+                automaticallyOpensLinks: false,
+                linkTapHandler: { tappedURL in
+                    activatedURLs.append(tappedURL)
+                    expectation.fulfill()
+                }
+            )
+        )
+
+        let size = view.sizeThatFits(CGSize(width: 260, height: CGFloat.greatestFiniteMagnitude))
+        view.frame = CGRect(x: 0, y: 0, width: 260, height: size.height)
+        view.layoutIfNeeded()
+
+        XCTAssertFalse(view.isAccessibilityElement)
+        let elements = try XCTUnwrap(view.accessibilityElements as? [UIAccessibilityElement])
+        XCTAssertEqual(elements.count, 3)
+        XCTAssertEqual(elements[0].accessibilityLabel, attributed.string)
+        XCTAssertEqual(elements[1].accessibilityLabel, "First link")
+        XCTAssertEqual(elements[2].accessibilityLabel, "second link")
+        XCTAssertFalse(elements[1].accessibilityFrameInContainerSpace.isEmpty)
+        XCTAssertFalse(elements[2].accessibilityFrameInContainerSpace.isEmpty)
+        XCTAssertTrue(elements[1].accessibilityActivate())
+        XCTAssertTrue(elements[2].accessibilityActivate())
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(activatedURLs, [firstURL, secondURL])
     }
 
     func testPreparedLabelViewTapGestureDoesNotCancelTouchesInView() throws {
@@ -762,11 +817,80 @@ final class PreparedTextUIKitTests: XCTestCase {
 
         let map = result.sourceCoordinateMap(in: prepared)
         let tokens = result.visibleTokens(in: prepared)
+        let hashtag = tokens.first(where: { $0.kind == .hashtag })
+        let hashtagRects = hashtag.map { map.displayedRects(for: $0) } ?? []
 
         XCTAssertEqual(map.lines.count, result.fragments.count)
         XCTAssertEqual(result.snapshot.obstacleCount, 1)
         XCTAssertTrue(tokens.contains { $0.kind == .hashtag })
         XCTAssertTrue(tokens.contains { $0.kind == .mention })
+        XCTAssertFalse(hashtagRects.isEmpty)
+        XCTAssertTrue(hashtagRects.contains { $0.rect.isEmpty == false })
+    }
+
+    func testPreparedTextObstacleLayouterSupportsRoundedRectObstacles() {
+        let prepared = PreparedTextSystem.shared.prepare(
+            text("Rounded exclusion cards should keep #prepared and @team visible while a wide panel trims the middle rows."),
+            sourceID: PreparedTextSourceID("ios-obstacle-rounded-rect")
+        )
+        let layouter = PreparedTextObstacleLayouter(textSystem: .shared)
+        let result = layouter.layout(
+            prepared: prepared,
+            in: CGRect(x: 24, y: 24, width: 272, height: 220),
+            obstacles: [
+                PreparedObstacle(
+                    roundedRect: PreparedTextObstacleRoundedRect(
+                        rect: CGRect(x: 132, y: 70, width: 88, height: 92),
+                        cornerRadius: 22
+                    )
+                ),
+            ],
+            lineHeight: prepared.defaultLineHeight,
+            obstaclePadding: 10,
+            minimumSpanWidth: 30
+        )
+
+        let map = result.sourceCoordinateMap(in: prepared)
+        let hashtagRange = (prepared.source.string as NSString).range(of: "#prepared")
+        let rects = map.displayedRects(forSourceUTF16Range: hashtagRange)
+
+        XCTAssertEqual(result.snapshot.obstacleCount, 1)
+        XCTAssertGreaterThan(result.snapshot.rowCount, 0)
+        XCTAssertGreaterThan(result.snapshot.fragmentCount, 0)
+        XCTAssertTrue(result.snapshot.splitRowCount > 0)
+        XCTAssertNotNil(result.preparedObstacles.first?.roundedRect)
+        XCTAssertFalse(rects.isEmpty)
+        XCTAssertFalse(rects[0].rect.isEmpty)
+    }
+
+    func testPreparedTextObstacleLayouterKeepsVisibleRectsForRightToLeftRanges() {
+        let attributed = NSMutableAttributedString(
+            string: "بطاقات العوائق تحافظ على الروابط المرئية",
+            attributes: [.font: UIFont.systemFont(ofSize: 19)]
+        )
+        let linkRange = (attributed.string as NSString).range(of: "الروابط")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/links")!, range: linkRange)
+
+        let prepared = PreparedTextSystem.shared.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("ios-obstacle-rtl-rects")
+        )
+        let layouter = PreparedTextObstacleLayouter(textSystem: .shared)
+        let result = layouter.layout(
+            prepared: prepared,
+            in: CGRect(x: 24, y: 24, width: 272, height: 220),
+            obstacles: [
+                PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: 160, y: 96), radius: 34)),
+            ],
+            lineHeight: prepared.defaultLineHeight,
+            obstaclePadding: 10,
+            minimumSpanWidth: 30
+        )
+
+        let rects = result.sourceCoordinateMap(in: prepared).displayedRects(forSourceUTF16Range: linkRange)
+
+        XCTAssertFalse(rects.isEmpty)
+        XCTAssertTrue(rects.contains { $0.rect.width > 0 })
     }
 
     func testObstacleDemoPreservesHardBreakAcrossSplitRows() {

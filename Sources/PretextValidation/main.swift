@@ -118,6 +118,37 @@ struct ValidationSuite {
             }
         }
 
+        func mergedRanges(_ ranges: [NSRange]) -> [NSRange] {
+            guard ranges.isEmpty == false else {
+                return []
+            }
+
+            let sorted = ranges.sorted {
+                if $0.location == $1.location {
+                    return $0.length < $1.length
+                }
+                return $0.location < $1.location
+            }
+
+            var merged: [NSRange] = []
+            for range in sorted {
+                guard var last = merged.last else {
+                    merged.append(range)
+                    continue
+                }
+
+                let lastEnd = NSMaxRange(last)
+                if range.location <= lastEnd {
+                    last.length = max(lastEnd, NSMaxRange(range)) - last.location
+                    merged[merged.count - 1] = last
+                } else {
+                    merged.append(range)
+                }
+            }
+
+            return merged
+        }
+
         execute("stage0-cache-hit") {
             let measurer = CachedFramesetterTextMeasurer()
             let text = fixtureText("Cache me if you can.")
@@ -346,7 +377,8 @@ struct ValidationSuite {
             try expect(packet.result.stoppedEarlyAtMaximumNumberOfLines, "expected single-line layout to stop early")
             try expect(packet.lines.first?.isTruncated == true, "expected visible line to carry truncation state")
             try expect(packet.result.visibleSourceUTF16Ranges.count == 1, "expected a single visible source range for tail truncation")
-            try expect(packet.sourceCoordinateMap.lines.first?.visibleSourceUTF16Ranges.count == 1, "expected source coordinate map to preserve the visible range")
+            let mappedRanges = mergedRanges(packet.sourceCoordinateMap.lines.first?.visibleSourceUTF16Ranges ?? [])
+            try expect(mappedRanges == packet.result.visibleSourceUTF16Ranges, "expected source coordinate map to preserve the visible range")
         }
 
         execute("word-wrap-line-limit-still-reports-hidden-overflow") {
@@ -433,6 +465,7 @@ struct ValidationSuite {
         execute("attachment-spans-report-placeholder-vs-resolved-state") {
             let registry = PreparedAttachmentRegistry()
             let attachmentID = PreparedAttachmentID("validation-attachment")
+            let sourceID = PreparedTextSourceID("validation-attachment-source")
             let engine = DefaultPreparedTextEngine(
                 measurer: CachedFramesetterTextMeasurer(),
                 attachmentResolver: registry
@@ -452,27 +485,41 @@ struct ValidationSuite {
 
             let placeholderPrepared = engine.prepare(
                 attributed,
-                sourceID: PreparedTextSourceID("validation-attachment-source"),
+                sourceID: sourceID,
                 options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
             )
             try expect(placeholderPrepared.attachmentSpans.count == 1, "expected one attachment span in placeholder state")
             try expect(placeholderPrepared.attachmentSpans.first?.isResolved == false, "expected placeholder attachment span to stay unresolved")
+            try expect(
+                registry.attachmentState(for: attachment.reference) == .placeholder(attachment.reference),
+                "expected registry to expose placeholder attachment lifecycle"
+            )
 
-            registry.setResolvedAttachment(
-                PreparedResolvedAttachment(
-                    bounds: CGRect(x: 0, y: 0, width: 24, height: 16),
-                    contentIdentity: "validation@2x"
+            registry.setAttachmentState(
+                .resolved(
+                    attachment.reference,
+                    PreparedResolvedAttachment(
+                        bounds: CGRect(x: 0, y: 0, width: 24, height: 16),
+                        contentIdentity: "validation@2x"
+                    )
                 ),
-                for: attachmentID,
                 invalidate: []
             )
             let resolvedPrepared = engine.prepare(
                 attributed,
-                sourceID: PreparedTextSourceID("validation-attachment-source"),
+                sourceID: sourceID,
                 options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
             )
             try expect(resolvedPrepared.attachmentSpans.first?.isResolved == true, "expected resolved attachment span after registry update")
             try expectEqual(resolvedPrepared.attachmentSpans.first?.resolvedContentIdentity, "validation@2x", "expected resolved content identity")
+            try expect(
+                registry.attachmentState(for: attachment.reference).resolvedAttachment?.contentIdentity == "validation@2x",
+                "expected resolver lifecycle to expose resolved content identity"
+            )
+            try expect(
+                registry.recordedSourceIDs(for: attachmentID).contains(sourceID),
+                "expected registry to retain targeted source invalidation usage"
+            )
         }
 
         execute("visible-tokens-follow-truncated-coordinate-map") {
@@ -522,8 +569,83 @@ struct ValidationSuite {
             )
 
             let spans = packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: NSRange(location: 0, length: 3))
+            let rects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: NSRange(location: 0, length: 3))
             try expect(packet.sourceCoordinateMap.mappingMode == .bestEffort, "expected css-normal mapping to be best-effort")
             try expect(spans.isEmpty == false, "expected best-effort coordinate mapping to still expose display spans")
+            try expect(rects.isEmpty == false, "expected best-effort coordinate mapping to still expose visible rects")
+            try expect(rects.allSatisfy { $0.isExact == false }, "expected best-effort coordinate rects to remain explicitly inexact")
+        }
+
+        execute("coordinate-map-rect-queries-follow-visible-link-geometry") {
+            let attributed = NSMutableAttributedString(
+                string: "Visible #first\nHidden second link",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+            )
+            let visibleRange = (attributed.string as NSString).range(of: "#first")
+            let hiddenRange = (attributed.string as NSString).range(of: "second link")
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/visible")!, range: visibleRange)
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/hidden")!, range: hiddenRange)
+
+            let prepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-coordinate-rects"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            let packet = engine.displayLayoutPacket(
+                prepared,
+                maxWidth: 180,
+                lineHeight: prepared.defaultLineHeight,
+                containerWidth: 180,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    alignment: .left,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            let visibleLink = packet.visibleAnnotations(in: prepared).first(where: { $0.kind == .link })
+            let visibleRects = visibleLink.map(packet.sourceCoordinateMap.displayedRects(for:)) ?? []
+            let hiddenRects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: hiddenRange)
+
+            try expect(visibleRects.isEmpty == false, "expected visible link rects from the public coordinate map")
+            try expect(hiddenRects.isEmpty == true, "expected hidden link rects to stay excluded after truncation")
+            try expect(visibleRects.allSatisfy(\.isExact), "expected visible literal link rects to stay exact")
+        }
+
+        execute("rtl-coordinate-map-rect-queries-stay-visible") {
+            let attributed = NSMutableAttributedString(
+                string: "مرحبا بالعالم",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 19, nil)]
+            )
+            let worldRange = (attributed.string as NSString).range(of: "بالعالم")
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/world")!, range: worldRange)
+
+            let prepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-rtl-coordinate-rects"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            let packet = engine.displayLayoutPacket(
+                prepared,
+                maxWidth: 220,
+                lineHeight: prepared.defaultLineHeight,
+                containerWidth: 220,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .wordWrap,
+                    alignment: .right,
+                    layoutDirection: .rightToLeft
+                )
+            )
+
+            let rects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: worldRange)
+
+            try expect(rects.isEmpty == false, "expected visible rects for right-to-left source ranges")
+            try expect(rects.contains { $0.rect.width > 0 }, "expected right-to-left rect query to preserve positive width")
+            try expect(rects.allSatisfy(\.isExact), "expected literal right-to-left rect queries to remain exact")
         }
 
 #if canImport(PretextUIKit)
@@ -560,6 +682,8 @@ struct ValidationSuite {
             let map = result.sourceCoordinateMap(in: prepared)
             let visibleTokens = result.visibleTokens(in: prepared)
             let visibleAnnotations = result.visibleAnnotations(in: prepared)
+            let hashtag = visibleTokens.first(where: { $0.kind == .hashtag })
+            let hashtagRects = hashtag.map { map.displayedRects(for: $0) } ?? []
 
             try expect(result.fragments.isEmpty == false, "expected obstacle layout to emit visible fragments")
             try expect(result.snapshot.obstacleCount == 1, "expected obstacle snapshot to report the public obstacle count")
@@ -567,6 +691,48 @@ struct ValidationSuite {
             try expect(visibleTokens.contains(where: { $0.kind == .mention }), "expected visible mention token through obstacle layout")
             try expect(visibleTokens.contains(where: { $0.kind == .hashtag }), "expected visible hashtag token through obstacle layout")
             try expect(visibleAnnotations.contains(where: { $0.kind == .link }), "expected visible link annotation through obstacle layout")
+            try expect(hashtagRects.isEmpty == false, "expected obstacle layout to expose visible rects for hashtag tokens")
+        }
+
+        execute("rounded-rect-obstacle-layout-exposes-public-visible-structure") {
+            let system = PreparedTextSystem(
+                measurer: CachedFramesetterTextMeasurer(),
+                invalidationCenter: PreparedInvalidationCenter()
+            )
+            let layouter = PreparedTextObstacleLayouter(textSystem: system)
+            let attributed = NSMutableAttributedString(
+                string: "Rounded panels keep #prepared and @ops readable while a note block trims the middle rows.",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+            )
+            let hashtagRange = (attributed.string as NSString).range(of: "#prepared")
+            let prepared = system.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-rounded-obstacle"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let result = layouter.layout(
+                prepared: prepared,
+                in: CGRect(x: 0, y: 0, width: 260, height: 180),
+                obstacles: [
+                    PreparedObstacle(
+                        roundedRect: PreparedTextObstacleRoundedRect(
+                            rect: CGRect(x: 132, y: 44, width: 88, height: 86),
+                            cornerRadius: 20
+                        )
+                    ),
+                ],
+                lineHeight: prepared.defaultLineHeight,
+                obstaclePadding: 10,
+                minimumSpanWidth: 30
+            )
+
+            let map = result.sourceCoordinateMap(in: prepared)
+            let rects = map.displayedRects(forSourceUTF16Range: hashtagRange)
+            try expect(result.fragments.isEmpty == false, "expected rounded-rect obstacle layout to emit visible fragments")
+            try expect(result.preparedObstacles.first?.roundedRect != nil, "expected public obstacle result to preserve rounded-rect metadata")
+            try expect(result.snapshot.splitRowCount > 0, "expected rounded-rect obstacle to split at least one row")
+            try expect(rects.isEmpty == false, "expected coordinate map rects through rounded-rect obstacle layout")
         }
 #endif
 

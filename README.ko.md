@@ -148,12 +148,12 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PreparedTextMeasurementOptions` 로 제어하는 public pixel-aligned measurement
 - `PreparedInvalidationCenter` 기반 explicit invalidation
 - `PreparedTextDiagnosticsSnapshot` 기반 public diagnostics
-- `PreparedAttachmentRegistry` 기반 attachment-aware inline prepared layout
+- `PreparedAttachmentResolver`, `PreparedAttachmentRegistry` 기반 attachment-aware inline prepared layout
 - `PreparedTextLayoutOptions` 기반 core-owned finite-line display policy
 - `PreparedTextLineBreakStrategy` 기반 public line-break strategy 선택
 - `PreparedToken`, `PreparedAnnotation`, `PreparedAttachmentSpan` 기반 public prepared-structure inspection
-- `PreparedTextSourceCoordinateMap` 기반 practical source/display coordinate conversion
-- `PreparedTextObstacleLayouter`, `PreparedObstacle` 기반 reusable circle-obstacle layout
+- `PreparedTextSourceCoordinateMap` 기반 practical source/display coordinate conversion과 rect query
+- `PreparedTextObstacleLayouter`, `PreparedObstacle` 기반 reusable circle / rounded-rect obstacle layout
 
 예시:
 
@@ -194,6 +194,7 @@ let coordinateMap = packet.sourceCoordinateMap
 let tokens = packet.visibleTokens(in: prepared)
 let annotations = packet.visibleAnnotations(in: prepared)
 let attachmentSpans = packet.visibleAttachmentSpans(in: prepared)
+let linkRects = annotations.first.map { coordinateMap.displayedRects(for: $0) } ?? []
 ```
 
 visual parity가 더 중요하면 exact width를 유지하세요.
@@ -215,14 +216,16 @@ Phase 2에서는 core engine이 직접 아래 semantics를 소유합니다.
 
 Phase 3에서는 이 ownership model 위에 네 가지 narrow public differentiator를 올립니다.
 
-- `PreparedAttachmentRegistry` 기반 attachment-aware prepared layout
+- `PreparedAttachmentResolver`, `PreparedAttachmentRegistry` 기반 attachment-aware prepared layout
 - `PreparedText.tokens`, `PreparedText.annotations`, `PreparedText.attachmentSpans` 기반 prepared structure inspection
-- `PreparedTextSourceCoordinateMap` 기반 source/display coordinate conversion
-- `PreparedTextObstacleLayouter` 기반 circle-only exclusion layout
+- `PreparedTextSourceCoordinateMap` 기반 source/display coordinate conversion과 visible rect query
+- `PreparedLabelView` 의 multi-link per-element accessibility
+- `PreparedTextObstacleLayouter` 기반 circle / rounded-rect exclusion layout
 
 여기서 attachment 지원이 뜻하는 범위는 다음과 같습니다.
 
 - read-only inline attachment가 실제 metric이 도착하기 전에도 placeholder bounds를 제공할 수 있다
+- `PreparedAttachmentResolver` 가 placeholder / resolved lifecycle을 직접 노출하고, `PreparedAttachmentRegistry` 가 기본 shared adapter로 남는다
 - resolved metrics와 content identity가 prepared layout reuse에 참여한다
 - registry update가 영향을 받은 prepared source ID만 targeted invalidation 할 수 있다
 - Stage 1 renderer는 이 metric을 소비하지만, full async media framework를 제공한다고 주장하지 않는다
@@ -231,17 +234,19 @@ token / annotation surface 역시 의도적으로 좁게 유지합니다.
 
 - link, mention, hashtag, attachment span, prepared word-like span을 deterministic 하게 검사할 수 있다
 - truncation 이후 visible token / annotation filtering은 packet 또는 coordinate map helper로 수행할 수 있다
+- `PreparedTextSourceCoordinateMap.displayedRects(...)` 로 해당 range를 visible rect로 다시 꺼내 interaction, analytics, debug overlay, accessibility scaffolding에 쓸 수 있다
 - editor model, syntax highlighter framework, generalized NLP/entity product로 넓히지 않는다
 
 coordinate mapping도 exactness를 숨기지 않습니다.
 
 - source coordinate space를 보존하는 모드에서는 `.exact`
 - whitespace normalization이 들어가는 모드에서는 `.bestEffort`
-- source UTF-16 range를 displayed span / visible line으로 보내고, 보존 가능한 범위에서 다시 source range로 되돌릴 수 있다
+- source UTF-16 range를 displayed span / visible line / visible rect로 보내고, 보존 가능한 범위에서 다시 source range로 되돌릴 수 있다
+- `PreparedLabelView` 의 multi-link accessibility도 같은 prepared representation geometry를 사용하고, 안전하게 분리할 수 없을 때만 container-level custom action fallback을 사용한다
 
 obstacle-aware layout도 명확히 narrow 합니다.
 
-- `PreparedTextObstacleLayouter` 는 repeated-width read-only text를 circle exclusion zone 주변에 흐르게 하는 용도입니다
+- `PreparedTextObstacleLayouter` 는 repeated-width read-only text를 circle 또는 rounded-rect exclusion zone 주변에 흐르게 하는 용도입니다
 - avatar avoidance, decorative card surface, editorial accent 같은 케이스에 맞습니다
 - arbitrary publication layout, scene-graph composition, browser-grade flowing text를 목표로 하지 않습니다
 

@@ -11,6 +11,7 @@ The current host coverage locks down the stable Phase 1 to Phase 3 release story
 - public line-break strategy selection on supported narrow surfaces
 - prepared token / annotation visibility through truncation-aware coordinate mapping
 - explicit exact-vs-best-effort source/display mapping semantics
+- coordinate-map rect queries that feed public link geometry and debug/inspection helpers
 - public obstacle-layout helpers over prepared text on supported host/tooling builds
 
 ## Host report
@@ -45,7 +46,9 @@ Phase 3 semantic checks also run in the host validation path:
 - `attachment-spans-report-placeholder-vs-resolved-state`
 - `visible-tokens-follow-truncated-coordinate-map`
 - `coordinate-map-best-effort-mode-is-explicit`
+- `coordinate-map-rect-queries-follow-visible-link-geometry`
 - `obstacle-layout-exposes-public-visible-structure`
+- `rounded-rect-obstacle-layout-exposes-public-visible-structure`
 
 ## Host gate
 
@@ -113,6 +116,7 @@ The simulator baseline subset is intentionally narrower than the host stable cor
 The simulator XCTest path also keeps the promoted UIKit-facing Phase 3 consumers honest:
 
 - `PreparedLabelView` visible token / annotation / attachment helpers
+- `PreparedLabelView` per-link accessibility elements for multi-link visible content, with safe fallback to container-level actions
 - `PreparedTextObstacleLayouter` public result, coordinate-map, and visible-token helpers
 - demo-backed read-only attachment and structured-span samples
 
