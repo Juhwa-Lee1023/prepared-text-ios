@@ -1365,7 +1365,7 @@ func preparedCoordinateRect(
     let rect = preparedCoordinateDisplayFrame(
         originX: originX,
         originY: originY,
-        lineWidth: max(localEnd - localStart, 0),
+        lineWidth: abs(localEnd - localStart),
         fragment: fragment
     ).offsetBy(dx: minLocalX, dy: 0)
     return rect.isNull || rect.isEmpty ? nil : rect

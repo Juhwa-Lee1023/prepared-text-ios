@@ -578,7 +578,7 @@ private func preparedObstacleCoordinateRect(
     let rect = preparedObstacleCoordinateDisplayFrame(
         originX: originX + min(localStart, localEnd),
         originY: originY,
-        lineWidth: max(localEnd - localStart, 0),
+        lineWidth: abs(localEnd - localStart),
         fragment: fragment
     )
     return rect.isNull || rect.isEmpty ? nil : rect

@@ -614,6 +614,40 @@ struct ValidationSuite {
             try expect(visibleRects.allSatisfy(\.isExact), "expected visible literal link rects to stay exact")
         }
 
+        execute("rtl-coordinate-map-rect-queries-stay-visible") {
+            let attributed = NSMutableAttributedString(
+                string: "مرحبا بالعالم",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 19, nil)]
+            )
+            let worldRange = (attributed.string as NSString).range(of: "بالعالم")
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/world")!, range: worldRange)
+
+            let prepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-rtl-coordinate-rects"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            let packet = engine.displayLayoutPacket(
+                prepared,
+                maxWidth: 220,
+                lineHeight: prepared.defaultLineHeight,
+                containerWidth: 220,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .wordWrap,
+                    alignment: .right,
+                    layoutDirection: .rightToLeft
+                )
+            )
+
+            let rects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: worldRange)
+
+            try expect(rects.isEmpty == false, "expected visible rects for right-to-left source ranges")
+            try expect(rects.contains { $0.rect.width > 0 }, "expected right-to-left rect query to preserve positive width")
+            try expect(rects.allSatisfy(\.isExact), "expected literal right-to-left rect queries to remain exact")
+        }
+
 #if canImport(PretextUIKit)
         execute("obstacle-layout-exposes-public-visible-structure") {
             let system = PreparedTextSystem(

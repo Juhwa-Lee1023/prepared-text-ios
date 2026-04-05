@@ -863,6 +863,36 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertFalse(rects[0].rect.isEmpty)
     }
 
+    func testPreparedTextObstacleLayouterKeepsVisibleRectsForRightToLeftRanges() {
+        let attributed = NSMutableAttributedString(
+            string: "بطاقات العوائق تحافظ على الروابط المرئية",
+            attributes: [.font: UIFont.systemFont(ofSize: 19)]
+        )
+        let linkRange = (attributed.string as NSString).range(of: "الروابط")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/links")!, range: linkRange)
+
+        let prepared = PreparedTextSystem.shared.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("ios-obstacle-rtl-rects")
+        )
+        let layouter = PreparedTextObstacleLayouter(textSystem: .shared)
+        let result = layouter.layout(
+            prepared: prepared,
+            in: CGRect(x: 24, y: 24, width: 272, height: 220),
+            obstacles: [
+                PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: 160, y: 96), radius: 34)),
+            ],
+            lineHeight: prepared.defaultLineHeight,
+            obstaclePadding: 10,
+            minimumSpanWidth: 30
+        )
+
+        let rects = result.sourceCoordinateMap(in: prepared).displayedRects(forSourceUTF16Range: linkRange)
+
+        XCTAssertFalse(rects.isEmpty)
+        XCTAssertTrue(rects.contains { $0.rect.width > 0 })
+    }
+
     func testObstacleDemoPreservesHardBreakAcrossSplitRows() {
         let view = PreparedTextObstacleDemoView()
         view.apply(

@@ -619,6 +619,40 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: firstWordRange).first?.isExact, false)
     }
 
+    func testSourceCoordinateMapKeepsVisibleRectsForRightToLeftRanges() {
+        let attributed = NSMutableAttributedString(
+            string: "مرحبا بالعالم",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 19, nil)]
+        )
+        let worldRange = (attributed.string as NSString).range(of: "بالعالم")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/world")!, range: worldRange)
+
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("rtl-coordinate-rects"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let packet = engine.displayLayoutPacket(
+            prepared,
+            maxWidth: 220,
+            lineHeight: prepared.defaultLineHeight,
+            containerWidth: 220,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .wordWrap,
+                alignment: .right,
+                layoutDirection: .rightToLeft
+            )
+        )
+
+        let rects = packet.sourceCoordinateMap.displayedRects(forSourceUTF16Range: worldRange)
+
+        XCTAssertFalse(rects.isEmpty)
+        XCTAssertTrue(rects.contains { $0.rect.width > 0 })
+        XCTAssertTrue(rects.allSatisfy(\.isExact))
+    }
+
     func testCoreLayoutPacketTreatsUnlimitedMaximumNumberOfLinesAsUnlimited() {
         let engine = DefaultPreparedTextEngine()
         let prepared = engine.prepare(
