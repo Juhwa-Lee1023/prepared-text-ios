@@ -313,6 +313,30 @@ public final class PreparedLabelView: UIView {
         return resolvedLayoutPacket(width: layoutWidth)?.sourceCoordinateMap
     }
 
+    public func visibleTokens() -> [PreparedToken]? {
+        guard let prepared = resolvedPreparedText(),
+              let map = sourceCoordinateMap() else {
+            return nil
+        }
+        return map.visibleTokens(in: prepared)
+    }
+
+    public func visibleAnnotations() -> [PreparedAnnotation]? {
+        guard let prepared = resolvedPreparedText(),
+              let map = sourceCoordinateMap() else {
+            return nil
+        }
+        return map.visibleAnnotations(in: prepared)
+    }
+
+    public func visibleAttachmentSpans() -> [PreparedAttachmentSpan]? {
+        guard let prepared = resolvedPreparedText(),
+              let map = sourceCoordinateMap() else {
+            return nil
+        }
+        return map.visibleAttachmentSpans(in: prepared)
+    }
+
     @discardableResult
     public func activateLink(at point: CGPoint) -> Bool {
         guard let url = link(at: point) else {

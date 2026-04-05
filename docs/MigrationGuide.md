@@ -41,14 +41,16 @@
 11. ergonomic call-site syntax 가 꼭 필요하면 experimental `Text.prepared(source:)` 만 제한적으로 쓴다. 이때도 prepared renderer 는 `source` payload 를 authoritative input 으로 사용하고, 원래 `Text` modifier 는 자동으로 보존되지 않는다.
 12. `.legacyMultiline` 는 unlimited multiline UILabel 을 자동 도입하지만 interactive label, attributed link label, finite line limit truncation label 은 기본적으로 제외한다.
 13. attachment 크기가 늦게 확정되는 surface 면 `PreparedAttachmentRegistry` 와 `PreparedTextAttachment` 로 placeholder bounds 를 먼저 넣고, metrics 확정 후 targeted invalidation 을 걸어준다.
-14. 실제 화면 전환 전 `./scripts/run-tests.sh`, `./scripts/run-validation.sh`, `./scripts/run-benchmarks.sh`, `./scripts/run-ios-demo-tests.sh` 로 regression 을 확인한다.
-15. committed `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` 를 열어 chat/feed/list/card, table, collection self-sizing 경로를 확인한다.
+14. visible link, mention, hashtag, attachment span inspection 이 필요하면 prepared 결과에서 `PreparedText.tokens`, `PreparedText.annotations`, `PreparedText.attachmentSpans` 또는 packet의 `visibleTokens(in:)`, `visibleAnnotations(in:)`, `visibleAttachmentSpans(in:)` 를 사용한다.
+15. source/display 대응이 필요한 UI 라면 `packet.sourceCoordinateMap` 을 기준으로 source range -> displayed span / line 변환을 한다. 단, `.cssNormal` 같은 whitespace normalization 경로에서는 reverse mapping 이 `.bestEffort` 일 수 있다는 점을 같이 반영한다.
+16. avatar avoidance 나 decorative exclusion zone 이 필요하면 `PreparedTextObstacleLayouter` 를 쓰되, 현재 public scope 는 circle-only exclusion layout 이라는 점을 전제로 둔다.
+17. 실제 화면 전환 전 `./scripts/run-tests.sh`, `./scripts/run-validation.sh`, `./scripts/run-benchmarks.sh`, `./scripts/run-ios-demo-tests.sh` 로 regression 을 확인한다.
+18. committed `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` 를 열어 chat/feed/list/card, table, collection self-sizing 경로와 prepared structure showcase / obstacle demo 를 확인한다.
 
 ## Do Not Migrate Yet
 
 - general-purpose `UILabel` replacement
 - rich attributed document viewer
 - full text interaction / custom accessibility element 분할이 필요한 링크 surface
-- truncation-heavy cells
 - bidi / CJK correctness 가 핵심인 surface
 - arbitrary SwiftUI `Text` conversion

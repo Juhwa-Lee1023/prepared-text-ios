@@ -80,6 +80,30 @@ public struct PreparedTextLayoutOptions: Hashable, Sendable {
     public static let `default` = PreparedTextLayoutOptions()
 }
 
+public enum PreparedTextSourceCoordinateMappingMode: String, Hashable, Sendable {
+    case exact
+    case bestEffort
+}
+
+public struct PreparedTextDisplayedSpan: Hashable, Sendable {
+    public var lineIndex: Int
+    public var displayUTF16Range: NSRange
+    public var sourceUTF16Range: NSRange?
+    public var isTruncatedLine: Bool
+
+    public init(
+        lineIndex: Int,
+        displayUTF16Range: NSRange,
+        sourceUTF16Range: NSRange?,
+        isTruncatedLine: Bool
+    ) {
+        self.lineIndex = lineIndex
+        self.displayUTF16Range = displayUTF16Range
+        self.sourceUTF16Range = sourceUTF16Range
+        self.isTruncatedLine = isTruncatedLine
+    }
+}
+
 public struct PreparedTextSourceCoordinateSpan: Hashable, Sendable {
     public var displayUTF16Range: NSRange
     public var sourceUTF16Range: NSRange?
@@ -117,13 +141,133 @@ public struct PreparedTextSourceCoordinateLine: Hashable, Sendable {
     public var visibleSourceUTF16Ranges: [NSRange] {
         sourceSpans.compactMap(\.sourceUTF16Range)
     }
+
+    public var displayUTF16Range: NSRange {
+        NSRange(location: 0, length: displayUTF16Length)
+    }
 }
 
 public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
+    public var mappingMode: PreparedTextSourceCoordinateMappingMode
     public var lines: [PreparedTextSourceCoordinateLine]
 
-    public init(lines: [PreparedTextSourceCoordinateLine]) {
+    public init(
+        mappingMode: PreparedTextSourceCoordinateMappingMode = .exact,
+        lines: [PreparedTextSourceCoordinateLine]
+    ) {
+        self.mappingMode = mappingMode
         self.lines = lines
+    }
+
+    public var visibleSourceUTF16Ranges: [NSRange] {
+        preparedMergedRanges(lines.flatMap(\.visibleSourceUTF16Ranges))
+    }
+
+    public var isExact: Bool {
+        mappingMode == .exact
+    }
+
+    public func line(at index: Int) -> PreparedTextSourceCoordinateLine? {
+        lines.first { $0.lineIndex == index }
+    }
+
+    public func displayedSpans(forSourceUTF16Range sourceUTF16Range: NSRange) -> [PreparedTextDisplayedSpan] {
+        guard sourceUTF16Range.length > 0 else {
+            return []
+        }
+
+        var matches: [PreparedTextDisplayedSpan] = []
+        for line in lines {
+            for span in line.sourceSpans {
+                guard let sourceRange = span.sourceUTF16Range else {
+                    continue
+                }
+                let intersection = NSIntersectionRange(sourceRange, sourceUTF16Range)
+                guard intersection.length > 0 else {
+                    continue
+                }
+
+                let displayRange: NSRange
+                if mappingMode == .exact, sourceRange.length == span.displayUTF16Range.length {
+                    let delta = intersection.location - sourceRange.location
+                    displayRange = NSRange(
+                        location: span.displayUTF16Range.location + delta,
+                        length: intersection.length
+                    )
+                } else {
+                    displayRange = span.displayUTF16Range
+                }
+
+                matches.append(
+                    PreparedTextDisplayedSpan(
+                        lineIndex: line.lineIndex,
+                        displayUTF16Range: displayRange,
+                        sourceUTF16Range: intersection,
+                        isTruncatedLine: line.isTruncated
+                    )
+                )
+            }
+        }
+
+        return matches
+    }
+
+    public func sourceUTF16Ranges(
+        forDisplayedUTF16Range displayUTF16Range: NSRange,
+        onLine lineIndex: Int
+    ) -> [NSRange] {
+        guard displayUTF16Range.length > 0, let line = line(at: lineIndex) else {
+            return []
+        }
+
+        var matches: [NSRange] = []
+        for span in line.sourceSpans {
+            guard let sourceRange = span.sourceUTF16Range else {
+                continue
+            }
+            let intersection = NSIntersectionRange(span.displayUTF16Range, displayUTF16Range)
+            guard intersection.length > 0 else {
+                continue
+            }
+
+            if mappingMode == .exact, sourceRange.length == span.displayUTF16Range.length {
+                let delta = intersection.location - span.displayUTF16Range.location
+                matches.append(NSRange(location: sourceRange.location + delta, length: intersection.length))
+            } else {
+                matches.append(sourceRange)
+            }
+        }
+
+        return preparedMergedRanges(matches)
+    }
+
+    public func visibleSourceUTF16Ranges(intersecting sourceUTF16Range: NSRange) -> [NSRange] {
+        guard sourceUTF16Range.length > 0 else {
+            return []
+        }
+
+        return preparedMergedRanges(
+            visibleSourceUTF16Ranges.compactMap { range in
+                let intersection = NSIntersectionRange(range, sourceUTF16Range)
+                return intersection.length > 0 ? intersection : nil
+            }
+        )
+    }
+
+    public func isSourceRangeVisible(_ sourceUTF16Range: NSRange) -> Bool {
+        visibleSourceUTF16Ranges(intersecting: sourceUTF16Range).isEmpty == false
+    }
+
+    public func visibleTokens(in prepared: PreparedText) -> [PreparedToken] {
+        prepared.tokens.filter { isSourceRangeVisible($0.sourceUTF16Range) }
+    }
+
+    public func visibleAnnotations(in prepared: PreparedText) -> [PreparedAnnotation] {
+        prepared.annotations.filter { isSourceRangeVisible($0.sourceUTF16Range) }
+    }
+
+    public func visibleAttachmentSpans(in prepared: PreparedText) -> [PreparedAttachmentSpan] {
+        prepared.attachmentSpans.filter { isSourceRangeVisible($0.sourceUTF16Range) }
     }
 }
 
@@ -178,14 +322,21 @@ public struct PreparedTextDisplayLine {
 public struct PreparedTextDisplayPacket {
     public var result: LayoutResult
     public var lines: [PreparedTextDisplayLine]
+    public var sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode
 
-    public init(result: LayoutResult, lines: [PreparedTextDisplayLine]) {
+    public init(
+        result: LayoutResult,
+        lines: [PreparedTextDisplayLine],
+        sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode = .exact
+    ) {
         self.result = result
         self.lines = lines
+        self.sourceCoordinateMappingMode = sourceCoordinateMappingMode
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
         PreparedTextSourceCoordinateMap(
+            mappingMode: sourceCoordinateMappingMode,
             lines: lines.enumerated().map { index, line in
                 PreparedTextSourceCoordinateLine(
                     lineIndex: index,
@@ -238,6 +389,36 @@ public extension PreparedText {
         }
 
         return LayoutCursor(segmentIndex: storage.core.segments.count, graphemeIndex: 0)
+    }
+}
+
+public extension PreparedToken {
+    func displayedSpans(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedSpan] {
+        map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
+    }
+
+    func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
+        map.isSourceRangeVisible(sourceUTF16Range)
+    }
+}
+
+public extension PreparedAnnotation {
+    func displayedSpans(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedSpan] {
+        map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
+    }
+
+    func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
+        map.isSourceRangeVisible(sourceUTF16Range)
+    }
+}
+
+public extension PreparedAttachmentSpan {
+    func displayedSpans(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedSpan] {
+        map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
+    }
+
+    func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
+        map.isSourceRangeVisible(sourceUTF16Range)
     }
 }
 
@@ -315,7 +496,8 @@ struct PreparedTextCoreLayoutBuilder {
         guard maximumVisibleLines > 0 else {
             return PreparedLayoutPacket(
                 result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0),
-                lines: []
+                lines: [],
+                sourceCoordinateMappingMode: prepared.sourceCoordinateMappingMode
             )
         }
 
@@ -361,7 +543,11 @@ struct PreparedTextCoreLayoutBuilder {
             stoppedEarlyAtMaximumNumberOfLines: stoppedEarly,
             visibleSourceUTF16Ranges: visibleRanges
         )
-        return PreparedLayoutPacket(result: result, lines: drawLines)
+        return PreparedLayoutPacket(
+            result: result,
+            lines: drawLines,
+            sourceCoordinateMappingMode: prepared.sourceCoordinateMappingMode
+        )
     }
 
     private func makeVisibleLine(from sourceLine: LineResult) -> PreparedDrawLine {
@@ -868,7 +1054,8 @@ private struct PreparedTextDisplayLayoutBuilder {
         guard !layoutPacket.lines.isEmpty else {
             return PreparedTextDisplayPacket(
                 result: layoutPacket.result,
-                lines: []
+                lines: [],
+                sourceCoordinateMappingMode: layoutPacket.sourceCoordinateMappingMode
             )
         }
 
@@ -879,7 +1066,11 @@ private struct PreparedTextDisplayLayoutBuilder {
             lines.append(makeDisplayLine(from: sourceLine))
         }
 
-        return PreparedTextDisplayPacket(result: layoutPacket.result, lines: lines)
+        return PreparedTextDisplayPacket(
+            result: layoutPacket.result,
+            lines: lines,
+            sourceCoordinateMappingMode: layoutPacket.sourceCoordinateMappingMode
+        )
     }
 
     private func makeDisplayLine(from sourceLine: PreparedDrawLine) -> PreparedTextDisplayLine {
@@ -960,4 +1151,31 @@ private extension PreparedText {
         let endOffset = utf16Offset(for: end)
         return NSRange(location: startOffset, length: max(endOffset - startOffset, 0))
     }
+}
+
+private func preparedMergedRanges(_ ranges: [NSRange]) -> [NSRange] {
+    let normalized = ranges
+        .filter { $0.length > 0 }
+        .sorted { lhs, rhs in
+            if lhs.location == rhs.location {
+                return lhs.length < rhs.length
+            }
+            return lhs.location < rhs.location
+        }
+
+    guard var current = normalized.first else {
+        return []
+    }
+
+    var merged: [NSRange] = []
+    for range in normalized.dropFirst() {
+        if range.location <= NSMaxRange(current) {
+            current.length = max(NSMaxRange(current), NSMaxRange(range)) - current.location
+        } else {
+            merged.append(current)
+            current = range
+        }
+    }
+    merged.append(current)
+    return merged
 }

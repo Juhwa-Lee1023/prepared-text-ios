@@ -139,7 +139,7 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 / Phase 2 엔진 개선 사항
+## Phase 1 / Phase 2 / Phase 3 엔진 개선 사항
 
 이 라이브러리는 이제 단순한 "text view wrapper"보다, 읽기 전용 repeated-width surface를 위한 reusable layout engine에 더 가깝게 동작합니다.
 
@@ -148,9 +148,12 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PreparedTextMeasurementOptions` 로 제어하는 public pixel-aligned measurement
 - `PreparedInvalidationCenter` 기반 explicit invalidation
 - `PreparedTextDiagnosticsSnapshot` 기반 public diagnostics
-- `PreparedAttachmentRegistry` 기반 attachment-aware placeholder / resolver plumbing
+- `PreparedAttachmentRegistry` 기반 attachment-aware inline prepared layout
 - `PreparedTextLayoutOptions` 기반 core-owned finite-line display policy
 - `PreparedTextLineBreakStrategy` 기반 public line-break strategy 선택
+- `PreparedToken`, `PreparedAnnotation`, `PreparedAttachmentSpan` 기반 public prepared-structure inspection
+- `PreparedTextSourceCoordinateMap` 기반 practical source/display coordinate conversion
+- `PreparedTextObstacleLayouter`, `PreparedObstacle` 기반 reusable circle-obstacle layout
 
 예시:
 
@@ -188,6 +191,9 @@ let packet = system.layoutPacket(
 )
 let diagnostics = system.diagnosticsSnapshot()
 let coordinateMap = packet.sourceCoordinateMap
+let tokens = packet.visibleTokens(in: prepared)
+let annotations = packet.visibleAnnotations(in: prepared)
+let attachmentSpans = packet.visibleAttachmentSpans(in: prepared)
 ```
 
 visual parity가 더 중요하면 exact width를 유지하세요.
@@ -207,15 +213,39 @@ Phase 2에서는 core engine이 직접 아래 semantics를 소유합니다.
 즉, 2-line tail-truncated feed card는 이제 UIKit 레이어에서 잘라내는 동작이 아니라, core engine 안에서 별도 key와 reuse story를 갖는 layout 시나리오가 됩니다.
 `PreparedLabelView` 와 `PreparedTextView` 는 이 core 결과를 소비해 렌더링하는 얇은 surface로 남습니다.
 
-attachment 지원은 이제 identity-aware / placeholder-aware 수준까지 올라왔지만, 여전히 full async attachment rendering framework는 아닙니다.
+Phase 3에서는 이 ownership model 위에 네 가지 narrow public differentiator를 올립니다.
 
-Phase 1 엔진 위에는 다음과 같은 narrow follow-up surface도 추가로 올라가 있습니다.
+- `PreparedAttachmentRegistry` 기반 attachment-aware prepared layout
+- `PreparedText.tokens`, `PreparedText.annotations`, `PreparedText.attachmentSpans` 기반 prepared structure inspection
+- `PreparedTextSourceCoordinateMap` 기반 source/display coordinate conversion
+- `PreparedTextObstacleLayouter` 기반 circle-only exclusion layout
 
-- 읽기 전용 line limit / truncation / alignment / layout direction 제어를 위한 `PreparedTextLayoutOptions`
-- displayed source span inspection 을 위한 `PreparedTextSourceCoordinateMap`
-- circle obstacle exclusion layout 을 위한 `PreparedTextObstacleLayouter`
+여기서 attachment 지원이 뜻하는 범위는 다음과 같습니다.
 
-이 surface 들도 의도적으로 narrow 하며, 프로젝트를 broad text toolkit 으로 넓히려는 목적은 아닙니다. 핵심 가치는 여전히 deterministic reuse, bounded cache, explicit invalidation, 그리고 core-owned read-only display policy에 있습니다.
+- read-only inline attachment가 실제 metric이 도착하기 전에도 placeholder bounds를 제공할 수 있다
+- resolved metrics와 content identity가 prepared layout reuse에 참여한다
+- registry update가 영향을 받은 prepared source ID만 targeted invalidation 할 수 있다
+- Stage 1 renderer는 이 metric을 소비하지만, full async media framework를 제공한다고 주장하지 않는다
+
+token / annotation surface 역시 의도적으로 좁게 유지합니다.
+
+- link, mention, hashtag, attachment span, prepared word-like span을 deterministic 하게 검사할 수 있다
+- truncation 이후 visible token / annotation filtering은 packet 또는 coordinate map helper로 수행할 수 있다
+- editor model, syntax highlighter framework, generalized NLP/entity product로 넓히지 않는다
+
+coordinate mapping도 exactness를 숨기지 않습니다.
+
+- source coordinate space를 보존하는 모드에서는 `.exact`
+- whitespace normalization이 들어가는 모드에서는 `.bestEffort`
+- source UTF-16 range를 displayed span / visible line으로 보내고, 보존 가능한 범위에서 다시 source range로 되돌릴 수 있다
+
+obstacle-aware layout도 명확히 narrow 합니다.
+
+- `PreparedTextObstacleLayouter` 는 repeated-width read-only text를 circle exclusion zone 주변에 흐르게 하는 용도입니다
+- avatar avoidance, decorative card surface, editorial accent 같은 케이스에 맞습니다
+- arbitrary publication layout, scene-graph composition, browser-grade flowing text를 목표로 하지 않습니다
+
+이 surface 들 역시 prepared representation을 더 쓸모 있게 만드는 기능일 뿐이며, 프로젝트를 broad text toolkit으로 바꾸려는 것이 아닙니다. 핵심 가치는 여전히 deterministic reuse, bounded cache, explicit invalidation, core-owned read-only display policy, practical prepared-structure inspection에 있습니다.
 
 ## 개발
 

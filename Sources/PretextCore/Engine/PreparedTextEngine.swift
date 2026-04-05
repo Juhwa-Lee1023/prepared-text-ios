@@ -375,7 +375,8 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
                 defaultLineHeight: segmenter.defaultLineHeight(for: sourceSnapshot),
                 tabStopAdvance: segmenter.tabStopAdvance(for: sourceSnapshot),
                 prefersNativeLineBreaking: preservesSourceCoordinateSpace
-                    && preferredNativeLineBreaking(for: sourceSnapshot.string)
+                    && preferredNativeLineBreaking(for: sourceSnapshot.string),
+                preservesSourceCoordinateSpace: preservesSourceCoordinateSpace
             )
             let nativeSource = nativeLineBreakingSource(
                 from: sourceSnapshot,

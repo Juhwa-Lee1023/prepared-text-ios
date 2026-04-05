@@ -338,6 +338,177 @@ final class PretextCoreTests: XCTestCase {
         )
     }
 
+    func testPreparedTextAttachmentSpansExposePlaceholderAndResolvedState() {
+        let registry = PreparedAttachmentRegistry()
+        let engine = DefaultPreparedTextEngine(
+            measurer: CachedFramesetterTextMeasurer(),
+            attachmentResolver: registry
+        )
+        let attachmentID = PreparedAttachmentID("phase3-attachment")
+        let attributed = referencedAttachmentText(
+            id: attachmentID,
+            placeholderBounds: CGRect(x: 0, y: 0, width: 12, height: 10)
+        )
+
+        let placeholderPrepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("phase3-attachment-source"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let placeholderSpan = try? XCTUnwrap(placeholderPrepared.attachmentSpans.first)
+        XCTAssertEqual(placeholderPrepared.attachmentSpans.count, 1)
+        XCTAssertEqual(placeholderSpan?.reference.id, attachmentID)
+        XCTAssertEqual(placeholderSpan?.resolvedBounds, CGRect(x: 0, y: 0, width: 12, height: 10))
+        XCTAssertFalse(placeholderSpan?.isResolved ?? true)
+
+        registry.setResolvedAttachment(
+            PreparedResolvedAttachment(
+                bounds: CGRect(x: 0, y: 0, width: 26, height: 18),
+                contentIdentity: "phase3@2x"
+            ),
+            for: attachmentID,
+            invalidate: []
+        )
+        let resolvedPrepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("phase3-attachment-source"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let resolvedSpan = try? XCTUnwrap(resolvedPrepared.attachmentSpans.first)
+        XCTAssertEqual(resolvedSpan?.reference.id, attachmentID)
+        XCTAssertEqual(resolvedSpan?.resolvedBounds, CGRect(x: 0, y: 0, width: 26, height: 18))
+        XCTAssertEqual(resolvedSpan?.resolvedContentIdentity, "phase3@2x")
+        XCTAssertTrue(resolvedSpan?.isResolved ?? false)
+    }
+
+    func testPreparedTextExposesDeterministicTokensAndAnnotations() {
+        let attributed = NSMutableAttributedString(
+            string: "Visit https://example.com @cache #prepared \u{FFFC}",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+        )
+        let urlRange = (attributed.string as NSString).range(of: "https://example.com")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com")!, range: urlRange)
+
+        let attachment = PreparedTextAttachment(
+            reference: PreparedAttachmentReference(
+                id: PreparedAttachmentID("token-attachment"),
+                placeholderBounds: CGRect(x: 0, y: 0, width: 14, height: 12)
+            )
+        )
+        attributed.addAttribute(.attachment, value: attachment, range: NSRange(location: attributed.length - 1, length: 1))
+        attributed.addAttribute(
+            .preparedAttachmentReference,
+            value: attachment.reference,
+            range: NSRange(location: attributed.length - 1, length: 1)
+        )
+
+        let prepared = DefaultPreparedTextEngine().prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("phase3-token-source"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let tokens = prepared.tokens
+        XCTAssertEqual(tokens.map(\.kind), [.word, .urlLike, .mention, .hashtag, .attachment])
+        XCTAssertEqual(tokens.map(\.sourceText), ["Visit", "https://example.com", "@cache", "#prepared", "\u{FFFC}"])
+        XCTAssertEqual(tokens.last?.attachmentReference?.id, PreparedAttachmentID("token-attachment"))
+
+        let annotations = prepared.annotations
+        XCTAssertEqual(annotations.map(\.kind), [.link, .mention, .hashtag, .attachment])
+        XCTAssertEqual(annotations.first?.linkDestination, "https://example.com")
+        XCTAssertEqual(annotations.last?.attachmentReference?.id, PreparedAttachmentID("token-attachment"))
+    }
+
+    func testVisibleTokensAndAnnotationsFollowTruncatedCoordinateMap() {
+        let attributed = NSMutableAttributedString(
+            string: "Visible #first\nHidden @second",
+            attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+        )
+        let firstRange = (attributed.string as NSString).range(of: "#first")
+        let secondRange = (attributed.string as NSString).range(of: "@second")
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/first")!, range: firstRange)
+        attributed.addAttribute(.link, value: URL(string: "https://example.com/second")!, range: secondRange)
+
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            attributed,
+            sourceID: PreparedTextSourceID("phase3-visible-token"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 220,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        XCTAssertEqual(packet.visibleTokens(in: prepared).map(\.kind), [.word, .hashtag])
+        XCTAssertEqual(packet.visibleAnnotations(in: prepared).map(\.kind), [.link, .hashtag])
+        XCTAssertEqual(packet.visibleAnnotations(in: prepared).first?.linkDestination, "https://example.com/first")
+    }
+
+    func testSourceCoordinateMapCanTranslateSourceAndDisplayRanges() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Alpha Beta Gamma Delta"),
+            sourceID: PreparedTextSourceID("phase3-coordinate-map"),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 70,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateMiddle,
+                alignment: .natural,
+                layoutDirection: .leftToRight
+            )
+        )
+
+        let alphaRange = (prepared.source.string as NSString).range(of: "Alpha")
+        let spans = packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: alphaRange)
+        XCTAssertEqual(packet.sourceCoordinateMap.mappingMode, .exact)
+        XCTAssertEqual(spans.count, 1)
+        XCTAssertEqual(spans.first?.displayUTF16Range.length, spans.first?.sourceUTF16Range?.length)
+        XCTAssertEqual(
+            packet.sourceCoordinateMap.sourceUTF16Ranges(
+                forDisplayedUTF16Range: spans[0].displayUTF16Range,
+                onLine: spans[0].lineIndex
+            ),
+            spans.compactMap(\.sourceUTF16Range)
+        )
+    }
+
+    func testCSSNormalCoordinateMapReportsBestEffortMode() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("One   two"),
+            sourceID: PreparedTextSourceID("phase3-coordinate-best-effort"),
+            options: PreparedTextOptions(whiteSpaceMode: .cssNormal)
+        )
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 200,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default
+        )
+
+        let firstWordRange = NSRange(location: 0, length: 3)
+        XCTAssertEqual(prepared.sourceCoordinateMappingMode, .bestEffort)
+        XCTAssertEqual(packet.sourceCoordinateMap.mappingMode, .bestEffort)
+        XCTAssertFalse(packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: firstWordRange).isEmpty)
+    }
+
     func testCoreLayoutPacketTreatsUnlimitedMaximumNumberOfLinesAsUnlimited() {
         let engine = DefaultPreparedTextEngine()
         let prepared = engine.prepare(

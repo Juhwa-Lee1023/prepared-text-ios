@@ -528,6 +528,34 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertTrue(map?.lines.first?.isTruncated ?? false)
     }
 
+    func testPreparedLabelViewVisibleAnnotationsFollowTruncatedDisplay() {
+        let visibleURL = URL(string: "https://example.com/visible-annotation")!
+        let hiddenURL = URL(string: "https://example.com/hidden-annotation")!
+        let attributed = NSMutableAttributedString(
+            string: "Visible #first\nHidden @second",
+            attributes: [.font: UIFont.systemFont(ofSize: 17)]
+        )
+        attributed.addAttribute(.link, value: visibleURL, range: NSRange(location: 8, length: 6))
+        attributed.addAttribute(.link, value: hiddenURL, range: NSRange(location: 22, length: 7))
+
+        let view = PreparedLabelView()
+        view.apply(
+            configuration: PreparedLabelConfiguration(
+                attributedText: attributed,
+                sourceID: PreparedTextSourceID("ios-visible-annotations"),
+                whiteSpaceMode: .uikitLiteral,
+                maxLayoutWidth: 220,
+                numberOfLines: 1,
+                lineBreakMode: .byTruncatingTail,
+                automaticallyOpensLinks: false
+            )
+        )
+
+        let annotations = view.visibleAnnotations()
+        XCTAssertEqual(annotations?.map(\.kind), [.link, .hashtag])
+        XCTAssertEqual(annotations?.first?.linkDestination, visibleURL.absoluteString)
+    }
+
     func testPreparedLabelViewKeepsOnlyVisibleLinksForAccessibilityWhenClippedAtHardBreak() {
         let visibleURL = URL(string: "https://example.com/visible")!
         let hiddenURL = URL(string: "https://example.com/hidden")!
@@ -713,6 +741,32 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertGreaterThan(result.snapshot.fragmentCount, 0)
         XCTAssertGreaterThan(result.snapshot.splitRowCount, 0)
         XCTAssertFalse(result.snapshot.renderedStrings.joined().isEmpty)
+    }
+
+    func testPreparedTextObstacleLayouterExposesCoordinateMapAndVisibleTokens() {
+        let prepared = PreparedTextSystem.shared.prepare(
+            text("Obstacle-aware cards should keep #prepared and @team spans inspectable while circles carve out exclusion zones."),
+            sourceID: PreparedTextSourceID("ios-obstacle-coordinate-map")
+        )
+        let layouter = PreparedTextObstacleLayouter(textSystem: .shared)
+        let result = layouter.layout(
+            prepared: prepared,
+            in: CGRect(x: 24, y: 24, width: 272, height: 220),
+            obstacles: [
+                PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: 160, y: 96), radius: 40)),
+            ],
+            lineHeight: prepared.defaultLineHeight,
+            obstaclePadding: 12,
+            minimumSpanWidth: 30
+        )
+
+        let map = result.sourceCoordinateMap(in: prepared)
+        let tokens = result.visibleTokens(in: prepared)
+
+        XCTAssertEqual(map.lines.count, result.fragments.count)
+        XCTAssertEqual(result.snapshot.obstacleCount, 1)
+        XCTAssertTrue(tokens.contains { $0.kind == .hashtag })
+        XCTAssertTrue(tokens.contains { $0.kind == .mention })
     }
 
     func testObstacleDemoPreservesHardBreakAcrossSplitRows() {

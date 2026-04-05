@@ -28,16 +28,6 @@ private enum PreparedObstacleDemoPalette {
     )
 }
 
-public struct PreparedTextObstacleCircle: Hashable {
-    public var center: CGPoint
-    public var radius: CGFloat
-
-    public init(center: CGPoint, radius: CGFloat) {
-        self.center = center
-        self.radius = radius
-    }
-}
-
 public enum PreparedTextObstacleDemoMode: Hashable {
     case dragonOrbit
     case bouncingBalls

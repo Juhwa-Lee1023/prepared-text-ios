@@ -7,8 +7,11 @@ prepared-text-ios keeps a host-side benchmark runner for the prepared-text hot p
 - exact vs bucketed width normalization
 - pixel-aligned measurement jitter reduction
 - line-break strategy selection on line-limited surfaces
-- Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text corpora
+- Latin, Korean/CJK, emoji-heavy, token-heavy, long-token, attachment-inline, and long-text corpora
 - list-style batch sizing with public layout options
+- prepared token / annotation extraction cost
+- source/display coordinate-map query cost
+- circle-obstacle layout sweep on top of prepared text
 
 ## Run
 
@@ -47,6 +50,8 @@ These benchmarks run as a host-side SwiftPM CLI on macOS. They are useful for:
 - exact vs bucketed vs pixel-aligned policy comparisons
 - URL-heavy policy comparisons through line-break strategy sweeps
 - cache reuse sanity checks through hit rate and cache-cost indicators
+- prepared representation extraction cost for token / annotation / coordinate-map queries
+- obstacle-layout cost on repeated-width prepared text around circle exclusion zones
 
 They are not a replacement for profiling on the final iOS app or device.
 
@@ -58,6 +63,8 @@ Read the report with these rules:
 - list-style batch rows matter more than single cold timings when judging adoption value
 - line-limited rows matter because Phase 2 moved max-lines and truncation ownership into the core engine
 - `url-friendly` and `native-typesetter` strategy rows are narrow supported policies, not browser-grade guarantees
+- prepared representation rows should stay cheap enough for inspection, hit-testing scaffolding, and analytics-style queries on already prepared packets
+- obstacle-layout rows are intentionally narrow and should be read as circle-exclusion layout costs, not as a general document-layout benchmark
 
 ## Release usage
 

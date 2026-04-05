@@ -30,15 +30,18 @@ swift run PretextBenchmarks
   - the stable host gate corpus must keep exact line counts, no divergent strict lines, and `heightDelta <= 1pt`
   - core-owned finite-line / truncation / layout-direction semantic checks must stay green
   - 1-line truncation, URL-heavy finite-line, and Korean finite-line semantic checks must stay green
+  - attachment placeholder/resolved-state, truncation-visible token filtering, and coordinate-map best-effort semantics must stay green
+  - obstacle-layout public structure checks must stay green on supported host/tooling builds
 - `swift run PretextBenchmarks`
   - `.build/reports/benchmark-results.md` must regenerate and be non-empty
   - release review should use the default benchmark sample counts, not a reduced local smoke profile
   - review exact vs `bucketed-4pt` vs `pixel-aligned` policy rows rather than only single cold timings
   - review finite-line and URL strategy rows because Phase 2 moved that policy into the core engine
+  - review prepared representation extraction and obstacle-layout rows because Phase 3 promotes them into public differentiators
 - `./scripts/run-ios-demo-tests.sh`
   - the committed iOS demo project at `Apps/PreparedTextDemo/PreparedTextDemo.xcodeproj` must build and test on simulator
   - strict `UILabel` / `UITextView` baseline XCTest must pass for the supported simulator baseline subset
-  - promoted Stage 1 layout options, source-coordinate mapping, and public obstacle layouter tests must stay green
+  - promoted Stage 1 layout options, source-coordinate mapping, token / annotation helpers, attachment helpers, and public obstacle layouter tests must stay green
 
 ## Manual Review Before Tagging
 
