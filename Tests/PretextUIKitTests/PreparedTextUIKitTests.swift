@@ -179,6 +179,38 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(diagnostics.reason, .supportNotInstalled)
     }
 
+    func testExplicitlyEnabledUILabelRespectsSystemLayoutSizingOptOut() {
+        PreparedTextLegacySupport.installUILabelSupport(
+            LegacyUILabelSupportConfiguration(
+                scope: .optInOnly,
+                swizzleSystemLayoutSizeFitting: false
+            )
+        )
+
+        let label = UILabel().prepared(
+            sourceID: PreparedTextSourceID("ios-stage0-explicit-system-layout-opt-out"),
+            installIfNeeded: false
+        )
+        label.numberOfLines = 0
+        label.attributedText = text("Explicit opt-in should still respect Stage 0 systemLayoutSizeFitting opt-out.")
+
+        let diagnostics = PreparedTextLegacySupport.adoptionDiagnostics(
+            for: label,
+            sizing: .systemLayoutSizeFitting
+        )
+        XCTAssertFalse(diagnostics.usesPreparedMeasurement)
+        XCTAssertEqual(diagnostics.reason, .systemLayoutSizingNotSwizzled)
+
+        let preparedMeasurement = PreparedTextLegacySupport.preparedMeasurementSize(
+            for: label,
+            sizing: .systemLayoutSizeFitting(
+                CGSize(width: 180, height: UIView.layoutFittingCompressedSize.height),
+                .required
+            )
+        )
+        XCTAssertNil(preparedMeasurement)
+    }
+
     func testMeasurementCachingLabelPreparedSetsSourceID() {
         let sourceID = PreparedTextSourceID("ios-measurement-label-prepared")
         let label: MeasurementCachingLabel = MeasurementCachingLabel().prepared(

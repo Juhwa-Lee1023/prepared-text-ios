@@ -269,12 +269,8 @@ public enum PreparedTextLegacySupport {
         case .disabled:
             return .excluded(.explicitlyDisabled)
 
-        case let .enabled(explicitSourceID):
-            guard let attributedText = label.pretextMeasurementAttributedText(), attributedText.length > 0 else {
-                return .excluded(.missingText)
-            }
-            _ = attributedText
-            return .adopted(explicitSourceID)
+        case .enabled:
+            break
 
         case .inheritGlobal:
             switch configuration.scope {
