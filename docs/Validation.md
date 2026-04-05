@@ -31,7 +31,10 @@ Report mode is intentionally descriptive. It prints the current host-side compar
 The semantic check section now includes direct engine-level finite-line assertions such as:
 
 - `finite-line-tail-truncation-is-core-owned`
+- `single-line-tail-truncation-exposes-visible-range`
 - `word-wrap-line-limit-still-reports-hidden-overflow`
+- `url-friendly-line-limit-preserves-structured-breaks`
+- `korean-finite-line-truncation-remains-core-owned`
 - `layout-direction-affects-core-alignment-resolution`
 
 ## Host gate

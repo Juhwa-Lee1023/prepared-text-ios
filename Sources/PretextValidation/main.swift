@@ -319,6 +319,35 @@ struct ValidationSuite {
             try expect(packet.lines.last?.isTruncated == true, "expected final visible line to carry truncation state")
         }
 
+        execute("single-line-tail-truncation-exposes-visible-range") {
+            let prepared = engine.prepare(
+                fixtureText("Single-line cards should expose their visible source span when the core engine truncates the tail."),
+                sourceID: PreparedTextSourceID("validation-line-limit-single"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 108,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            try expect(packet.lines.count == 1, "expected exactly one visible line")
+            try expect(packet.result.isTruncated, "expected single-line layout to report truncation")
+            try expect(packet.result.stoppedEarlyAtMaximumNumberOfLines, "expected single-line layout to stop early")
+            try expect(packet.lines.first?.isTruncated == true, "expected visible line to carry truncation state")
+            try expect(packet.result.visibleSourceUTF16Ranges.count == 1, "expected a single visible source range for tail truncation")
+            try expect(packet.sourceCoordinateMap.lines.first?.visibleSourceUTF16Ranges.count == 1, "expected source coordinate map to preserve the visible range")
+        }
+
         execute("word-wrap-line-limit-still-reports-hidden-overflow") {
             let prepared = engine.prepare(
                 fixtureText("Word wrapping with a finite line limit should clip overflow without inventing an ellipsis token."),
@@ -343,6 +372,61 @@ struct ValidationSuite {
             try expect(packet.result.isTruncated, "expected finite word-wrap layout to report clipped overflow")
             try expect(packet.lines.first?.isTruncated == true, "expected final visible line to report truncation even without an ellipsis")
             try expect(packet.lines.first?.attributedText.string.contains("…") == false, "word-wrap clipping should not inject ellipsis")
+        }
+
+        execute("url-friendly-line-limit-preserves-structured-breaks") {
+            let prepared = engine.prepare(
+                fixtureText("https://example.com/prepared-layouts/with/a/long/path/that/needs/structured/breaks"),
+                sourceID: PreparedTextSourceID("validation-url-line-limit"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: measure("https://example.com/") + 0.25,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .wordWrap,
+                    lineBreakStrategy: .urlFriendly,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            try expect(packet.lines.count == 1, "expected exactly one visible url-heavy line")
+            try expect(packet.result.isTruncated, "expected url-heavy finite-line layout to report clipped overflow")
+            try expect(packet.lines.first?.attributedText.string == "https://example.com/", "expected url-friendly strategy to preserve a structured breakpoint")
+            try expect(packet.result.visibleSourceUTF16Ranges.count == 1, "expected visible source range for the structured url prefix")
+        }
+
+        execute("korean-finite-line-truncation-remains-core-owned") {
+            let prepared = engine.prepare(
+                fixtureText("준비된 텍스트 엔진은 반복되는 카드 요약 폭에서도 유한 줄 수와 잘린 범위를 코어 레이아웃 결과로 직접 노출해야 한다."),
+                sourceID: PreparedTextSourceID("validation-korean-line-limit"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 116,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 2,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .cjkImproved,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            try expect(packet.lines.count == 2, "expected exactly two visible Korean lines")
+            try expect(packet.result.isTruncated, "expected Korean finite-line layout to report truncation")
+            try expect(packet.result.stoppedEarlyAtMaximumNumberOfLines, "expected Korean finite-line layout to stop early")
+            try expect(packet.result.visibleLineCount == 2, "expected visible line count to remain observable")
+            try expect(packet.result.visibleSourceUTF16Ranges.isEmpty == false, "expected visible source ranges for the retained Korean lines")
         }
 
         execute("layout-direction-affects-core-alignment-resolution") {
