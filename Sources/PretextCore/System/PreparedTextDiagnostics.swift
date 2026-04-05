@@ -22,8 +22,10 @@ public struct PreparedTextInvalidationStats: Hashable, Sendable {
 public struct PreparedTextDiagnosticsSnapshot: Hashable, Sendable {
     public var measurementCache: MeasurementStats
     public var preparedTextCache: CacheDiagnosticsSnapshot
+    public var geometryPacketCache: CacheDiagnosticsSnapshot
     public var layoutPacketCache: CacheDiagnosticsSnapshot
     public var segmentMeasurementCache: CacheDiagnosticsSnapshot
+    public var geometryPacketReuseCount: Int
     public var layoutPacketReuseCount: Int
     public var averageLinesPerLayout: Double
     public var invalidations: PreparedTextInvalidationStats
@@ -31,16 +33,20 @@ public struct PreparedTextDiagnosticsSnapshot: Hashable, Sendable {
     public init(
         measurementCache: MeasurementStats,
         preparedTextCache: CacheDiagnosticsSnapshot,
+        geometryPacketCache: CacheDiagnosticsSnapshot = CacheDiagnosticsSnapshot(),
         layoutPacketCache: CacheDiagnosticsSnapshot,
         segmentMeasurementCache: CacheDiagnosticsSnapshot,
+        geometryPacketReuseCount: Int = 0,
         layoutPacketReuseCount: Int = 0,
         averageLinesPerLayout: Double = 0,
         invalidations: PreparedTextInvalidationStats = PreparedTextInvalidationStats()
     ) {
         self.measurementCache = measurementCache
         self.preparedTextCache = preparedTextCache
+        self.geometryPacketCache = geometryPacketCache
         self.layoutPacketCache = layoutPacketCache
         self.segmentMeasurementCache = segmentMeasurementCache
+        self.geometryPacketReuseCount = geometryPacketReuseCount
         self.layoutPacketReuseCount = layoutPacketReuseCount
         self.averageLinesPerLayout = averageLinesPerLayout
         self.invalidations = invalidations

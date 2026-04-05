@@ -643,27 +643,55 @@ struct TextLineWalker {
         maxWidth: CGFloat,
         priorBreak: BreakCandidate?
     ) -> BreakCandidate? {
-        guard segment.kind == .cjkRun,
-              startGraphemeIndex == 0,
-              segment.graphemeCount - startGraphemeIndex >= 3,
+        guard startGraphemeIndex == 0,
               positionBefore > 0,
               let priorBreak,
-              priorBreak.end > lineStart,
-              let splitCursor = internalWrapCursor(
-                  for: segment,
-                  segmentIndex: segmentIndex,
-                  startGraphemeIndex: startGraphemeIndex,
-                  availableWidth: availableWidthReservingTrailingPunctuation(
-                      after: segmentIndex,
-                      baseAvailableWidth: maxWidth - positionBefore
-                  )
-              ) else {
+              priorBreak.end > lineStart else {
+            return nil
+        }
+
+        let availableWidth = availableWidthReservingTrailingPunctuation(
+            after: segmentIndex,
+            baseAvailableWidth: maxWidth - positionBefore
+        )
+        let splitCursor: LayoutCursor?
+        let minimumImprovement: CGFloat
+
+        switch segment.kind {
+        case .cjkRun:
+            guard segment.graphemeCount - startGraphemeIndex >= 3 else {
+                return nil
+            }
+            splitCursor = internalWrapCursor(
+                for: segment,
+                segmentIndex: segmentIndex,
+                startGraphemeIndex: startGraphemeIndex,
+                availableWidth: availableWidth
+            )
+            minimumImprovement = max(4, maxWidth * 0.08)
+
+        case .urlLike:
+            guard !segment.preferredBreakGraphemeIndices.isEmpty else {
+                return nil
+            }
+            splitCursor = preferredBreakCursor(
+                for: segment,
+                segmentIndex: segmentIndex,
+                startGraphemeIndex: startGraphemeIndex,
+                availableWidth: availableWidth
+            )
+            minimumImprovement = max(2, maxWidth * 0.04)
+
+        default:
+            return nil
+        }
+
+        guard let splitCursor else {
             return nil
         }
 
         let consumedWidth = segment.advance(from: startGraphemeIndex, to: splitCursor.graphemeIndex)
         let width = positionBefore + consumedWidth
-        let minimumImprovement = max(4, maxWidth * 0.08)
         guard width > priorBreak.width + minimumImprovement else {
             return nil
         }

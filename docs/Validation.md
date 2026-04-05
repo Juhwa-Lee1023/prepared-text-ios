@@ -1,7 +1,7 @@
 # Validation
 
 prepared-text-ios ships two validation paths and one Apple-platform verification path.
-The current host coverage locks down the stable Phase 1 to Phase 3 release story:
+The current host coverage locks down the stable release story through the latest engine-polish round:
 
 - deterministic attributed-range cache identity
 - width bucketization and pixel alignment behavior
@@ -13,6 +13,10 @@ The current host coverage locks down the stable Phase 1 to Phase 3 release story
 - explicit exact-vs-best-effort source/display mapping semantics
 - coordinate-map rect queries that feed public link geometry and debug/inspection helpers
 - public obstacle-layout helpers over prepared text on supported host/tooling builds
+- geometry-packet vs draw-packet separation for measurement-heavy flows
+- public truncation token/state helpers and visible-range reporting
+- Stage 0 adoption diagnostics on supported UIKit paths
+- focused URL/social-token validation for mid-line structured entry cases
 
 ## Host report
 
@@ -40,6 +44,10 @@ The semantic check section now includes direct engine-level finite-line assertio
 - `url-friendly-line-limit-preserves-structured-breaks`
 - `korean-finite-line-truncation-remains-core-owned`
 - `layout-direction-affects-core-alignment-resolution`
+- `geometry-packet-reuse-stays-separate-from-draw-cache`
+- `custom-truncation-token-preserves-visible-range`
+- `url-like-token-keeps-structured-breakpoint-after-mid-line-entry`
+- `hashtag-prefers-delimiter-split-after-mid-line-entry`
 
 Phase 3 semantic checks also run in the host validation path:
 
@@ -49,6 +57,10 @@ Phase 3 semantic checks also run in the host validation path:
 - `coordinate-map-rect-queries-follow-visible-link-geometry`
 - `obstacle-layout-exposes-public-visible-structure`
 - `rounded-rect-obstacle-layout-exposes-public-visible-structure`
+
+UIKit-aware host validation also now checks Stage 0 rollout explanation on supported builds:
+
+- `stage0-adoption-diagnostics-explain-finite-line-exclusion`
 
 ## Host gate
 
@@ -120,6 +132,12 @@ The simulator XCTest path also keeps the promoted UIKit-facing Phase 3 consumers
 - `PreparedTextObstacleLayouter` public result, coordinate-map, and visible-token helpers
 - demo-backed read-only attachment and structured-span samples
 
+The simulator XCTest path also covers Round 2 UIKit-facing utility surfaces:
+
+- `PreparedLabelView.isTruncated()`, `visibleTextRange()`, and `visibleTextRanges()`
+- `MeasurementCachingLabel().prepared(..., cacheProfile: ...)` and `PreparedLabelView().prepared(..., cacheProfile: ...)`
+- `PreparedTextLegacySupport.adoptionDiagnostics(for:)` for stable Stage 0 exclusion reasons
+
 ## Release usage
 
 For a release candidate or final tag, run:
@@ -144,5 +162,5 @@ For performance verification, pair the validation gate with:
 ./scripts/run-benchmarks.sh
 ```
 
-The benchmark report now compares exact widths, 4pt bucketed widths, and pixel-aligned measurement across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, token-heavy, and long-text fixtures.
-It also includes line-limited and URL-heavy scenarios so Phase 2 finite-line behavior is exercised outside ad hoc UI tests, plus prepared-representation extraction and obstacle-layout rows for Phase 3 public surfaces.
+The benchmark report now compares exact widths with the public `balanced`, `aggressive`, and `stickyPrepared` cache profiles across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, token-heavy, and long-text fixtures.
+It also includes line-limited and URL-heavy scenarios so finite-line and mid-line structured-token behavior are exercised outside ad hoc UI tests, plus geometry-vs-draw packet rows, prepared-representation extraction rows, and obstacle-layout rows for the promoted public surfaces.

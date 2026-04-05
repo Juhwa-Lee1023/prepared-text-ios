@@ -16,6 +16,8 @@ The current showcase also includes narrow public differentiators that sit on top
 - prepared structure inspection with inline attachment, link, mention, and hashtag content
 - attachment resolver state and multi-link accessibility behavior through `PreparedLabelView`
 - source-coordinate-map-driven visible span inspection
+- Stage 0 rollout examples using public cache profiles such as `.balanced`
+- custom truncation token examples that exercise visible-range reporting without pretending to be an editor UI
 - circle-obstacle interaction demos for read-only prepared surfaces, with rounded-rect obstacle coverage kept in host validation and benchmark fixtures
 
 ## Open in Xcode

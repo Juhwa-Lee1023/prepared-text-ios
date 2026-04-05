@@ -303,6 +303,18 @@ struct ValidationSuite {
             try expectEqual(line?.text, "https://example.com/", "expected structured delimiter split before grapheme fallback")
         }
 
+        execute("url-like-token-keeps-structured-breakpoint-after-mid-line-entry") {
+            let prepared = engine.prepare(
+                fixtureText("Visit https://example.com/prepared-layouts"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            let first = engine.nextLine(prepared, cursor: LayoutCursor(), maxWidth: 96)
+            let second = engine.nextLine(prepared, cursor: first?.end ?? LayoutCursor(), maxWidth: 96)
+
+            try expectEqual(first?.text, "Visit https://", "expected url-like token to keep a structured split after mid-line entry")
+            try expectEqual(second?.text, "example.co", "expected continuation to stay on a structured url fragment instead of falling back to the earlier break")
+        }
+
         execute("hashtag-prefers-delimiter-split-when-it-starts-the-line") {
             let prepared = engine.prepare(
                 fixtureText("#layout-cache results"),
@@ -310,6 +322,16 @@ struct ValidationSuite {
             )
             let line = engine.nextLine(prepared, cursor: LayoutCursor(), maxWidth: measure("#layout-") + 0.25)
             try expectEqual(line?.text, "#layout-", "expected hashtag delimiter split to stay available")
+        }
+
+        execute("hashtag-prefers-delimiter-split-after-mid-line-entry") {
+            let prepared = engine.prepare(
+                fixtureText("Ping #layout-cache before rollout"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            let first = engine.nextLine(prepared, cursor: LayoutCursor(), maxWidth: measure("Ping #layout-") + 0.25)
+
+            try expectEqual(first?.text, "Ping #layout-", "expected hashtag delimiter split to stay available after entering mid-line")
         }
 
         execute("line-fragment-height-follows-requested-line-height") {
@@ -379,6 +401,65 @@ struct ValidationSuite {
             try expect(packet.result.visibleSourceUTF16Ranges.count == 1, "expected a single visible source range for tail truncation")
             let mappedRanges = mergedRanges(packet.sourceCoordinateMap.lines.first?.visibleSourceUTF16Ranges ?? [])
             try expect(mappedRanges == packet.result.visibleSourceUTF16Ranges, "expected source coordinate map to preserve the visible range")
+        }
+
+        execute("geometry-packet-reuse-stays-separate-from-draw-cache") {
+            let geometryEngine = DefaultPreparedTextEngine()
+            let prepared = geometryEngine.prepare(
+                fixtureText("Geometry packets should service measurement-only flows without populating draw packets."),
+                sourceID: PreparedTextSourceID("validation-geometry-only"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            _ = geometryEngine.geometryPacket(
+                prepared,
+                maxWidth: 160,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: .default
+            )
+            _ = geometryEngine.geometryPacket(
+                prepared,
+                maxWidth: 160,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: .default
+            )
+
+            let snapshot = geometryEngine.diagnosticsSnapshot()
+            try expect(snapshot.geometryPacketReuseCount == 1, "expected one geometry packet reuse")
+            try expect(snapshot.geometryPacketCache.currentEntryCount == 1, "expected one cached geometry packet")
+            try expect(snapshot.layoutPacketCache.currentEntryCount == 0, "geometry-only path should not populate draw packet cache")
+        }
+
+        execute("custom-truncation-token-preserves-visible-range") {
+            let prepared = engine.prepare(
+                fixtureText("Prepared truncation hooks should expose visible source ranges without inventing editor behavior."),
+                sourceID: PreparedTextSourceID("validation-custom-truncation-token"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 120,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight,
+                    truncationToken: PreparedTruncationToken(text: "[more]", attributeBehavior: .plain)
+                )
+            )
+
+            let line = packet.lines.first
+            let visibleRange = packet.result.visibleTextRange
+            try expect(packet.result.isTruncated, "expected truncation state for custom token layout")
+            try expect(line?.attributedText.string.hasSuffix("[more]") == true, "expected custom truncation token to appear in rendered line")
+            try expect(visibleRange != nil, "expected visible text range for truncated line")
+            try expect(line?.truncationTokenDisplayUTF16Range != nil, "expected display range for custom truncation token")
         }
 
         execute("word-wrap-line-limit-still-reports-hidden-overflow") {
@@ -649,6 +730,20 @@ struct ValidationSuite {
         }
 
 #if canImport(PretextUIKit)
+#if canImport(UIKit)
+        execute("stage0-adoption-diagnostics-explain-finite-line-exclusion") {
+            PreparedTextLegacySupport.installUILabelSupport(.legacyMultiline)
+
+            let label = UILabel()
+            label.numberOfLines = 2
+            label.attributedText = fixtureText("Finite-line UILabels should stay on system truncation semantics during Stage 0 rollout.")
+
+            let diagnostics = PreparedTextLegacySupport.adoptionDiagnostics(for: label)
+            try expect(diagnostics.usesPreparedMeasurement == false, "expected finite-line label to stay out of automatic Stage 0 adoption")
+            try expect(diagnostics.reason == .finiteLineLimitRequiresStage1, "expected finite-line rollout reason to mention Stage 1")
+        }
+#endif
+
         execute("obstacle-layout-exposes-public-visible-structure") {
             let system = PreparedTextSystem(
                 measurer: CachedFramesetterTextMeasurer(),

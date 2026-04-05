@@ -133,6 +133,14 @@ public struct LayoutResult: Hashable, Sendable {
     public var visibleLineCount: Int {
         fragments.count
     }
+
+    public var visibleTextRanges: [NSRange] {
+        preparedMergedRanges(visibleSourceUTF16Ranges)
+    }
+
+    public var visibleTextRange: NSRange? {
+        preparedSingleRange(from: visibleTextRanges)
+    }
 }
 
 public struct PreparedDrawLine {
@@ -143,6 +151,7 @@ public struct PreparedDrawLine {
     public var consumedSourceUTF16Range: NSRange
     public var sourceSpans: [PreparedTextSourceCoordinateSpan]
     public var resolvedAlignment: PreparedTextHorizontalAlignment
+    public var truncationTokenDisplayUTF16Range: NSRange?
 
     public init(
         fragment: LineFragment,
@@ -151,7 +160,8 @@ public struct PreparedDrawLine {
         isTruncated: Bool = false,
         consumedSourceUTF16Range: NSRange = NSRange(location: 0, length: 0),
         sourceSpans: [PreparedTextSourceCoordinateSpan] = [],
-        resolvedAlignment: PreparedTextHorizontalAlignment = .left
+        resolvedAlignment: PreparedTextHorizontalAlignment = .left,
+        truncationTokenDisplayUTF16Range: NSRange? = nil
     ) {
         self.fragment = fragment
         self.attributedText = attributedText
@@ -160,22 +170,109 @@ public struct PreparedDrawLine {
         self.consumedSourceUTF16Range = consumedSourceUTF16Range
         self.sourceSpans = sourceSpans
         self.resolvedAlignment = resolvedAlignment
+        self.truncationTokenDisplayUTF16Range = truncationTokenDisplayUTF16Range
+    }
+
+    public var visibleTextRanges: [NSRange] {
+        preparedMergedRanges(sourceSpans.compactMap(\.sourceUTF16Range))
+    }
+
+    public var visibleTextRange: NSRange? {
+        preparedSingleRange(from: visibleTextRanges)
     }
 }
 
-public struct PreparedLayoutPacket {
+enum PreparedGeometryLineMaterialization {
+    case visible(LineResult)
+    case truncated(LineResult, PreparedTruncatedLineMaterialization)
+    case unavailable
+}
+
+struct PreparedTruncatedLineMaterialization {
+    var attributedText: NSAttributedString
+    var sourceSpans: [PreparedTextSourceCoordinateSpan]
+    var truncationTokenDisplayUTF16Range: NSRange?
+}
+
+public struct PreparedGeometryLine {
+    public var fragment: LineFragment
+    public var isTruncated: Bool
+    public var consumedSourceUTF16Range: NSRange
+    public var visibleSourceUTF16Ranges: [NSRange]
+    public var displayUTF16Length: Int
+    public var truncationTokenDisplayUTF16Range: NSRange?
+
+    var sourceSpans: [PreparedTextSourceCoordinateSpan]
+    var materialization: PreparedGeometryLineMaterialization
+
+    public var visibleTextRange: NSRange? {
+        preparedSingleRange(from: visibleSourceUTF16Ranges)
+    }
+}
+
+public struct PreparedGeometryPacket {
     public var result: LayoutResult
-    public var lines: [PreparedDrawLine]
+    public var lines: [PreparedGeometryLine]
     public var sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode
 
     public init(
         result: LayoutResult,
-        lines: [PreparedDrawLine],
+        lines: [PreparedGeometryLine],
         sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode = .exact
     ) {
         self.result = result
         self.lines = lines
         self.sourceCoordinateMappingMode = sourceCoordinateMappingMode
+    }
+
+    public var visibleTextRanges: [NSRange] {
+        result.visibleTextRanges
+    }
+
+    public var visibleTextRange: NSRange? {
+        result.visibleTextRange
+    }
+}
+
+public struct PreparedLayoutPacket {
+    public var result: LayoutResult
+    public var geometry: PreparedGeometryPacket
+    public var lines: [PreparedDrawLine]
+    public var sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode
+
+    public init(
+        result: LayoutResult,
+        geometry: PreparedGeometryPacket? = nil,
+        lines: [PreparedDrawLine],
+        sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode = .exact
+    ) {
+        self.result = result
+        self.geometry = geometry ?? PreparedGeometryPacket(
+            result: result,
+            lines: lines.map {
+                PreparedGeometryLine(
+                    fragment: $0.fragment,
+                    isTruncated: $0.isTruncated,
+                    consumedSourceUTF16Range: $0.consumedSourceUTF16Range,
+                    visibleSourceUTF16Ranges: preparedMergedRanges($0.sourceSpans.compactMap(\.sourceUTF16Range)),
+                    displayUTF16Length: $0.attributedText.length,
+                    truncationTokenDisplayUTF16Range: $0.truncationTokenDisplayUTF16Range,
+                    sourceSpans: $0.sourceSpans,
+                    materialization: .unavailable
+                )
+            },
+            sourceCoordinateMappingMode: sourceCoordinateMappingMode
+        )
+        self.lines = lines
+        self.sourceCoordinateMappingMode = sourceCoordinateMappingMode
+    }
+
+    public var visibleTextRanges: [NSRange] {
+        geometry.visibleTextRanges
+    }
+
+    public var visibleTextRange: NSRange? {
+        geometry.visibleTextRange
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
@@ -218,6 +315,8 @@ public struct PreparedLayoutPacket {
         )
     }
 }
+
+public typealias PreparedDrawPacket = PreparedLayoutPacket
 
 public struct LineResult: Hashable, Sendable {
     public var width: CGFloat
@@ -355,4 +454,39 @@ public struct PreparedText: Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(ObjectIdentifier(storage))
     }
+}
+
+func preparedSingleRange(from ranges: [NSRange]) -> NSRange? {
+    let merged = preparedMergedRanges(ranges)
+    guard merged.count == 1 else {
+        return nil
+    }
+    return merged.first
+}
+
+func preparedMergedRanges(_ ranges: [NSRange]) -> [NSRange] {
+    let normalized = ranges
+        .filter { $0.length > 0 }
+        .sorted { lhs, rhs in
+            if lhs.location == rhs.location {
+                return lhs.length < rhs.length
+            }
+            return lhs.location < rhs.location
+        }
+
+    guard var current = normalized.first else {
+        return []
+    }
+
+    var merged: [NSRange] = []
+    for range in normalized.dropFirst() {
+        if range.location <= NSMaxRange(current) {
+            current.length = max(NSMaxRange(current), NSMaxRange(range)) - current.location
+        } else {
+            merged.append(current)
+            current = range
+        }
+    }
+    merged.append(current)
+    return merged
 }

@@ -6,10 +6,11 @@ extension MeasurementCachingLabel {
     @discardableResult
     public func prepared(
         sourceID: PreparedTextSourceID? = nil,
-        measurementOptions: PreparedTextMeasurementOptions = .default
+        measurementOptions: PreparedTextMeasurementOptions = .default,
+        cacheProfile: PreparedTextCacheProfile? = nil
     ) -> Self {
         self.sourceID = sourceID
-        self.measurementOptions = measurementOptions
+        self.measurementOptions = cacheProfile?.measurementOptions ?? measurementOptions
         return self
     }
 }

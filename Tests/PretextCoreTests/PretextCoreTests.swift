@@ -112,7 +112,7 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(line?.text, "https://example.com/")
     }
 
-    func testURLLikeContinuationUsesWeakAndStrongBreakpointPriorities() {
+    func testURLLikeContinuationKeepsStructuredBreakpointsAfterMidLineEntry() {
         let engine = DefaultPreparedTextEngine()
         let prepared = engine.prepare(
             text("Visit https://example.com/prepared-layouts"),
@@ -123,9 +123,9 @@ final class PretextCoreTests: XCTestCase {
         let second = engine.nextLine(prepared, cursor: first?.end ?? LayoutCursor(), maxWidth: 96)
         let third = engine.nextLine(prepared, cursor: second?.end ?? LayoutCursor(), maxWidth: 96)
 
-        XCTAssertEqual(first?.text, "Visit")
-        XCTAssertEqual(second?.text, "https://")
-        XCTAssertEqual(third?.text, "example.co")
+        XCTAssertEqual(first?.text, "Visit https://")
+        XCTAssertEqual(second?.text, "example.co")
+        XCTAssertEqual(third?.text, "m/prepared-")
     }
 
     func testHashtagTokenPrefersDelimiterBreakpointWhenItStartsTheLine() {
@@ -1018,7 +1018,7 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(engine.diagnosticsSnapshot().layoutPacketCache.currentEntryCount, 2)
     }
 
-    func testLineBreakStrategyCanChangeFiniteLineURLLayout() {
+    func testURLFriendlyFiniteLineLayoutKeepsMidLineStructuredBreaks() {
         let engine = DefaultPreparedTextEngine()
         let prepared = engine.prepare(
             text("Visit https://example.com/prepared-layouts for rollout notes and cache visibility."),
@@ -1033,35 +1033,18 @@ final class PretextCoreTests: XCTestCase {
             alignment: .natural,
             layoutDirection: .leftToRight
         )
-        let nativeOptions = PreparedTextLayoutOptions(
-            maximumNumberOfLines: 2,
-            lineBreakMode: .wordWrap,
-            lineBreakStrategy: .nativeTypesetterPreferred,
-            alignment: .natural,
-            layoutDirection: .leftToRight
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 96,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: urlFriendlyOptions
         )
 
-        XCTAssertNotEqual(urlFriendlyOptions, nativeOptions)
-        let widths: [CGFloat] = [72, 84, 96, 108, 120, 132]
-        let differsAtAnyWidth = widths.contains { width in
-            let urlFriendly = engine.layoutPacket(
-                prepared,
-                maxWidth: width,
-                lineHeight: prepared.defaultLineHeight,
-                env: .default,
-                options: urlFriendlyOptions
-            )
-            let native = engine.layoutPacket(
-                prepared,
-                maxWidth: width,
-                lineHeight: prepared.defaultLineHeight,
-                env: .default,
-                options: nativeOptions
-            )
-            return urlFriendly.lines.map { $0.attributedText.string } != native.lines.map { $0.attributedText.string }
-        }
-
-        XCTAssertTrue(differsAtAnyWidth)
+        XCTAssertTrue(packet.result.isTruncated)
+        XCTAssertEqual(packet.lines.count, 2)
+        XCTAssertEqual(packet.lines.first?.attributedText.string, "Visit https://")
+        XCTAssertEqual(packet.lines.last?.attributedText.string, "example.co")
     }
 
     func testExplicitLineHeightControlsFragmentBlockAdvance() {
@@ -1130,6 +1113,99 @@ final class PretextCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.layoutPacketCache.hitCount, 1)
         XCTAssertGreaterThan(snapshot.layoutPacketCache.currentEntryCount, 0)
         XCTAssertGreaterThan(snapshot.averageLinesPerLayout, 0)
+    }
+
+    func testGeometryPacketReuseDoesNotPopulateDrawPacketCache() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Geometry packets should cover measurement-only paths without forcing draw cache population."),
+            sourceID: PreparedTextSourceID("geometry-only-reuse")
+        )
+
+        let first = engine.geometryPacket(
+            prepared,
+            maxWidth: 160,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: .default
+        )
+        let second = engine.geometryPacket(
+            prepared,
+            maxWidth: 160,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: .default
+        )
+
+        XCTAssertEqual(first.result, second.result)
+        XCTAssertFalse(first.visibleTextRanges.isEmpty)
+
+        let snapshot = engine.diagnosticsSnapshot()
+        XCTAssertEqual(snapshot.geometryPacketReuseCount, 1)
+        XCTAssertEqual(snapshot.geometryPacketCache.hitCount, 1)
+        XCTAssertGreaterThan(snapshot.geometryPacketCache.currentEntryCount, 0)
+        XCTAssertEqual(snapshot.layoutPacketCache.currentEntryCount, 0)
+    }
+
+    func testCustomTruncationTokenAndVisibleTextRangeStayPublic() {
+        let engine = DefaultPreparedTextEngine()
+        let prepared = engine.prepare(
+            text("Prepared truncation hooks should support read more affordances without forcing editor behavior."),
+            options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+        )
+        let options = PreparedTextLayoutOptions(
+            maximumNumberOfLines: 1,
+            lineBreakMode: .truncateTail,
+            lineBreakStrategy: .automatic,
+            alignment: .natural,
+            layoutDirection: .leftToRight,
+            truncationToken: PreparedTruncationToken(text: "[more]", attributeBehavior: .plain)
+        )
+
+        let geometry = engine.geometryPacket(
+            prepared,
+            maxWidth: 120,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: options
+        )
+        let packet = engine.layoutPacket(
+            prepared,
+            maxWidth: 120,
+            lineHeight: prepared.defaultLineHeight,
+            env: .default,
+            options: options
+        )
+
+        XCTAssertTrue(geometry.result.isTruncated)
+        XCTAssertNotNil(geometry.visibleTextRange)
+        XCTAssertEqual(geometry.result.visibleTextRange, packet.visibleTextRange)
+        XCTAssertEqual(geometry.result, packet.result)
+
+        guard let line = packet.lines.first else {
+            XCTFail("expected a visible truncated line")
+            return
+        }
+        XCTAssertTrue(line.attributedText.string.hasSuffix("[more]"))
+        XCTAssertEqual(
+            line.truncationTokenDisplayUTF16Range,
+            NSRange(location: line.attributedText.length - "[more]".utf16.count, length: "[more]".utf16.count)
+        )
+    }
+
+    func testCacheProfilePresetsExposeMeaningfulMeasurementPolicies() {
+        XCTAssertEqual(PreparedTextMeasurementOptions(cacheProfile: .balanced), .init(
+            widthNormalizationPolicy: .bucketed(points: 4),
+            pixelMeasurementPolicy: .alignedToScale
+        ))
+        XCTAssertEqual(PreparedTextMeasurementOptions(cacheProfile: .aggressive), .init(
+            widthNormalizationPolicy: .bucketed(points: 8),
+            pixelMeasurementPolicy: .alignedToScale
+        ))
+        XCTAssertEqual(PreparedTextMeasurementOptions(cacheProfile: .stickyPrepared), .init(
+            widthNormalizationPolicy: .bucketed(points: 12),
+            pixelMeasurementPolicy: .alignedToScale
+        ))
     }
 
     func testPreparedTextEngineDefaultExtensionPreservesLegacyConformance() {
@@ -1697,6 +1773,16 @@ private final class LegacyPreparedTextEngine: PreparedTextEngine {
 
     func layout(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> LayoutResult {
         backing.layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight)
+    }
+
+    func geometryPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
+    ) -> PreparedGeometryPacket {
+        backing.geometryPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
     }
 
     func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult? {

@@ -54,6 +54,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
     public var numberOfLines: Int
     public var lineBreakMode: NSLineBreakMode
     public var textAlignment: NSTextAlignment
+    public var measurementOptions: PreparedTextMeasurementOptions
+    public var layoutOptions: PreparedTextLayoutOptions?
     public var tintColor: UIColor
     public var surfaceColor: UIColor
     public var capabilityTags: [String]
@@ -68,6 +70,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
         numberOfLines: Int = 0,
         lineBreakMode: NSLineBreakMode = .byTruncatingTail,
         textAlignment: NSTextAlignment = .natural,
+        measurementOptions: PreparedTextMeasurementOptions = .default,
+        layoutOptions: PreparedTextLayoutOptions? = nil,
         tintColor: UIColor = .systemBlue,
         surfaceColor: UIColor = .secondarySystemBackground,
         capabilityTags: [String] = [],
@@ -82,6 +86,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
         self.numberOfLines = max(numberOfLines, 0)
         self.lineBreakMode = lineBreakMode
         self.textAlignment = textAlignment
+        self.measurementOptions = measurementOptions
+        self.layoutOptions = layoutOptions
         self.tintColor = tintColor
         self.surfaceColor = surfaceColor
         self.capabilityTags = capabilityTags
@@ -97,6 +103,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
             lhs.numberOfLines == rhs.numberOfLines &&
             lhs.lineBreakMode == rhs.lineBreakMode &&
             lhs.textAlignment == rhs.textAlignment &&
+            lhs.measurementOptions == rhs.measurementOptions &&
+            lhs.layoutOptions == rhs.layoutOptions &&
             lhs.tintColor == rhs.tintColor &&
             lhs.surfaceColor == rhs.surfaceColor &&
             lhs.capabilityTags == rhs.capabilityTags &&
@@ -114,6 +122,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
         hasher.combine(numberOfLines)
         hasher.combine(lineBreakMode.rawValue)
         hasher.combine(textAlignment.rawValue)
+        hasher.combine(measurementOptions)
+        hasher.combine(layoutOptions)
         hasher.combine(PreparedTextUIKitDemoItem.stableColorDescriptor(for: tintColor, interfaceStyle: .light))
         hasher.combine(PreparedTextUIKitDemoItem.stableColorDescriptor(for: tintColor, interfaceStyle: .dark))
         hasher.combine(PreparedTextUIKitDemoItem.stableColorDescriptor(for: surfaceColor, interfaceStyle: .light))
@@ -243,12 +253,13 @@ public struct PreparedTextUIKitDemoItem: Hashable {
                 body: stage0Rollout,
                 surfaceMode: .stage0MeasureOnly,
                 lineBreakMode: .byWordWrapping,
+                measurementOptions: PreparedTextMeasurementOptions(cacheProfile: .balanced),
                 tintColor: UIColor(red: 0.15, green: 0.43, blue: 0.81, alpha: 1.0),
                 surfaceColor: PreparedUIKitDemoPalette.dynamic(
                     UIColor(red: 0.91, green: 0.95, blue: 1.0, alpha: 1.0),
                     UIColor(red: 0.14, green: 0.19, blue: 0.27, alpha: 1.0)
                 ),
-                capabilityTags: ["Stage 0", "Self-sizing", "UILabel"],
+                capabilityTags: ["Stage 0", "Balanced cache", "UILabel"],
                 sourceID: PreparedTextSourceID("uikit-stage0-rollout")
             ),
             PreparedTextUIKitDemoItem(
@@ -324,12 +335,20 @@ public struct PreparedTextUIKitDemoItem: Hashable {
                 numberOfLines: 2,
                 lineBreakMode: .byTruncatingMiddle,
                 textAlignment: .center,
+                layoutOptions: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 2,
+                    lineBreakMode: .truncateMiddle,
+                    lineBreakStrategy: .automatic,
+                    alignment: .center,
+                    layoutDirection: .natural,
+                    truncationToken: PreparedTruncationToken(text: "[more]", attributeBehavior: .plain)
+                ),
                 tintColor: UIColor(red: 0.72, green: 0.37, blue: 0.15, alpha: 1.0),
                 surfaceColor: PreparedUIKitDemoPalette.dynamic(
                     UIColor(red: 0.99, green: 0.95, blue: 0.90, alpha: 1.0),
                     UIColor(red: 0.24, green: 0.17, blue: 0.13, alpha: 1.0)
                 ),
-                capabilityTags: ["Center", "2 lines", "Middle truncation"],
+                capabilityTags: ["Center", "2 lines", "Custom token"],
                 sourceID: PreparedTextSourceID("uikit-centered-callout")
             ),
             PreparedTextUIKitDemoItem(
@@ -1201,6 +1220,7 @@ private final class PreparedTextDemoSurfaceCardView: UIView {
 
         measurementLabel.attributedText = item.body
         measurementLabel.sourceID = item.sourceID
+        measurementLabel.measurementOptions = item.measurementOptions
         measurementLabel.numberOfLines = item.numberOfLines
         measurementLabel.lineBreakMode = item.lineBreakMode
         measurementLabel.textAlignment = item.textAlignment
@@ -1210,6 +1230,8 @@ private final class PreparedTextDemoSurfaceCardView: UIView {
                 attributedText: item.body,
                 sourceID: item.sourceID,
                 whiteSpaceMode: item.whiteSpaceMode,
+                measurementOptions: item.measurementOptions,
+                layoutOptions: item.layoutOptions,
                 numberOfLines: item.numberOfLines,
                 lineBreakMode: item.lineBreakMode,
                 textAlignment: item.textAlignment,

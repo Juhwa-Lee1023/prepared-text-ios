@@ -20,6 +20,14 @@ public protocol PreparedTextEngine: AnyObject {
         env: MeasurementEnv,
         options: PreparedTextLayoutOptions
     ) -> LayoutResult
+    func geometryPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedGeometryPacket
+    func geometryPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
+    ) -> PreparedGeometryPacket
     func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult?
     func attributedLine(_ prepared: PreparedText, line: LineResult) -> NSAttributedString
     func attributedText(_ prepared: PreparedText, from start: LayoutCursor, to end: LayoutCursor?, flatteningHardBreaks: Bool) -> NSAttributedString
@@ -42,10 +50,15 @@ public extension PreparedTextEngine {
         layout(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env)
     }
 
+    func geometryPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedGeometryPacket {
+        geometryPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default, options: .default)
+    }
+
     func diagnosticsSnapshot() -> PreparedTextDiagnosticsSnapshot {
         PreparedTextDiagnosticsSnapshot(
             measurementCache: MeasurementStats(),
             preparedTextCache: CacheDiagnosticsSnapshot(),
+            geometryPacketCache: CacheDiagnosticsSnapshot(),
             layoutPacketCache: CacheDiagnosticsSnapshot(),
             segmentMeasurementCache: CacheDiagnosticsSnapshot()
         )
@@ -79,7 +92,21 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             return max(textBytes + packet.lines.count * 96 + lineCost, 1)
         }
     )
+    private let geometryPacketCache = CostBoundCache<LayoutPacketKey, PreparedGeometryPacket>(
+        countLimit: 768,
+        totalCostLimit: 8 * 1_024 * 1_024,
+        cost: { packet in
+            let fragmentCost = packet.result.fragments.reduce(0) { partialResult, fragment in
+                partialResult + Int((fragment.paintWidth + fragment.blockAdvance).rounded(.up))
+            }
+            let lineCost = packet.lines.reduce(0) { partialResult, line in
+                partialResult + max(line.displayUTF16Length, 1) * 8 + line.visibleSourceUTF16Ranges.count * 32
+            }
+            return max(fragmentCost + lineCost, 1)
+        }
+    )
     private var invalidationStats = PreparedTextInvalidationStats()
+    private var geometryPacketReuseCount = 0
     private var layoutPacketReuseCount = 0
     private var observedLayoutLineCount = 0
     private var observedLayoutCount = 0
@@ -119,7 +146,53 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         env: MeasurementEnv,
         options: PreparedTextLayoutOptions
     ) -> LayoutResult {
-        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options).result
+        geometryPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options).result
+    }
+
+    public func geometryPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedGeometryPacket {
+        geometryPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: .default, options: .default)
+    }
+
+    public func geometryPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv,
+        options: PreparedTextLayoutOptions
+    ) -> PreparedGeometryPacket {
+        let resolvedLineHeight = lineHeight > 0 ? lineHeight : prepared.defaultLineHeight
+        guard maxWidth >= 0 else {
+            return PreparedGeometryPacket(result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0), lines: [])
+        }
+
+        let resolvedWidth = env.resolvedMeasurementWidth(maxWidth)
+        let key = LayoutPacketKey(
+            identity: prepared.storage.layoutIdentity,
+            widthInPixels: env.normalizedWidth(maxWidth),
+            lineHeightKey: env.cacheScalarKey(resolvedLineHeight),
+            context: MeasurementCacheContext(env: env),
+            preparedTextOptions: PreparedTextOptionsCacheContext(options: prepared.storage.options),
+            layoutOptions: options
+        )
+
+        if let cached = geometryPacketCache.value(forKey: key) {
+            geometryPacketReuseCount += 1
+            recordObservedLayout(cached.result.lineCount)
+            return cached
+        }
+
+        let packet = PreparedTextSignposts.measure("Stage1GeometryPacket") {
+            PreparedTextCoreLayoutBuilder(
+                engine: self,
+                prepared: prepared,
+                layoutWidth: resolvedWidth,
+                requestedLineHeight: resolvedLineHeight,
+                options: options
+            ).buildGeometry()
+        }
+        geometryPacketCache.insert(packet, forKey: key)
+        recordObservedLayout(packet.result.lineCount)
+        return packet
     }
 
     public func layoutPacket(_ prepared: PreparedText, maxWidth: CGFloat, lineHeight: CGFloat) -> PreparedLayoutPacket {
@@ -163,6 +236,13 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             return cached
         }
 
+        let geometry = geometryPacket(
+            prepared,
+            maxWidth: maxWidth,
+            lineHeight: lineHeight,
+            env: env,
+            options: options
+        )
         let packet = PreparedTextSignposts.measure("Stage1LayoutPacket") {
             PreparedTextCoreLayoutBuilder(
                 engine: self,
@@ -170,11 +250,20 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
                 layoutWidth: resolvedWidth,
                 requestedLineHeight: resolvedLineHeight,
                 options: options
-            ).build()
+            ).materialize(geometry)
         }
         layoutPacketCache.insert(packet, forKey: key)
-        recordObservedLayout(packet.result.lineCount)
         return packet
+    }
+
+    public func drawPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions = .default
+    ) -> PreparedDrawPacket {
+        layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
     }
 
     public func nextLine(_ prepared: PreparedText, cursor: LayoutCursor, maxWidth: CGFloat) -> LineResult? {
@@ -294,8 +383,10 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
         PreparedTextDiagnosticsSnapshot(
             measurementCache: measurer.stats,
             preparedTextCache: preparedTextCache.snapshot,
+            geometryPacketCache: geometryPacketCache.snapshot,
             layoutPacketCache: layoutPacketCache.snapshot,
             segmentMeasurementCache: segmentMeasurementCache.snapshot,
+            geometryPacketReuseCount: geometryPacketReuseCount,
             layoutPacketReuseCount: layoutPacketReuseCount,
             averageLinesPerLayout: observedLayoutCount > 0
                 ? Double(observedLayoutLineCount) / Double(observedLayoutCount)
@@ -306,6 +397,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
 
     func invalidateCaches(reason: PreparedInvalidationReason) {
         preparedTextCache.removeAll()
+        geometryPacketCache.removeAll()
         layoutPacketCache.removeAll()
         measurer.invalidateAll()
         segmentMeasurementCache.invalidateAll()
@@ -324,6 +416,12 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
             }
             return sourceIDs.contains(sourceID)
         }
+        geometryPacketCache.removeAll { key, _ in
+            guard let sourceID = key.identity.sourceID else {
+                return false
+            }
+            return sourceIDs.contains(sourceID)
+        }
         layoutPacketCache.removeAll { key, _ in
             guard let sourceID = key.identity.sourceID else {
                 return false
@@ -337,6 +435,11 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
     }
 
     func trimForBackground(reason: PreparedInvalidationReason = .backgroundTrim) {
+        let geometrySnapshot = geometryPacketCache.snapshot
+        geometryPacketCache.trim(
+            countLimit: geometrySnapshot.countLimit.map { max($0 / 2, 1) },
+            totalCostLimit: geometrySnapshot.totalCostLimit.map { max($0 / 2, 1) }
+        )
         let layoutSnapshot = layoutPacketCache.snapshot
         layoutPacketCache.trim(
             countLimit: layoutSnapshot.countLimit.map { max($0 / 2, 1) },

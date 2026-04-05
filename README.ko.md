@@ -58,8 +58,12 @@ PreparedTextLegacySupport.installUILabelSupport(.legacyMultiline)
 
 let legacyLabel = UILabel().prepared()
 legacyLabel.attributedText = NSAttributedString(string: "Prepared body copy")
+let adoption = PreparedTextLegacySupport.adoptionDiagnostics(for: legacyLabel)
 
-let stage0Label = MeasurementCachingLabel().prepared(sourceID: .init("feed/body"))
+let stage0Label = MeasurementCachingLabel().prepared(
+    sourceID: .init("feed/body"),
+    cacheProfile: .balanced
+)
 stage0Label.attributedText = NSAttributedString(string: "Prepared body copy")
 
 let label = PreparedLabelView().prepared(
@@ -139,13 +143,14 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 / Phase 2 / Phase 3 엔진 개선 사항
+## 현재 엔진 개선 사항
 
 이 라이브러리는 이제 단순한 "text view wrapper"보다, 읽기 전용 repeated-width surface를 위한 reusable layout engine에 더 가깝게 동작합니다.
 
 - Stage 0 / Stage 1 모두에서 attributed-range 기반의 deterministic cache identity
 - `WidthNormalizationPolicy` 로 드러나는 explicit width normalization
 - `PreparedTextMeasurementOptions` 로 제어하는 public pixel-aligned measurement
+- `PreparedTextCacheProfile` 기반 public cache profile preset
 - `PreparedInvalidationCenter` 기반 explicit invalidation
 - `PreparedTextDiagnosticsSnapshot` 기반 public diagnostics
 - `PreparedAttachmentResolver`, `PreparedAttachmentRegistry` 기반 attachment-aware inline prepared layout
@@ -154,6 +159,10 @@ zero-arg `Text.prepared()`는 여전히 지원하지 않습니다. SwiftUI `Text
 - `PreparedToken`, `PreparedAnnotation`, `PreparedAttachmentSpan` 기반 public prepared-structure inspection
 - `PreparedTextSourceCoordinateMap` 기반 practical source/display coordinate conversion과 rect query
 - `PreparedTextObstacleLayouter`, `PreparedObstacle` 기반 reusable circle / rounded-rect obstacle layout
+- `PreparedGeometryPacket` 기반 measurement-first geometry packet
+- `PreparedDrawPacket` 기반 draw-ready packet materialization
+- `PreparedTruncationToken`, `PreparedGeometryPacket.visibleTextRange`, `PreparedLabelView.isTruncated()` 기반 public truncation hook
+- `PreparedTextLegacySupport.adoptionDiagnostics(for:)` 기반 Stage 0 rollout diagnostics
 
 예시:
 
@@ -182,7 +191,17 @@ let layoutOptions = PreparedTextLayoutOptions(
     layoutDirection: .leftToRight
 )
 
-let packet = system.layoutPacket(
+let geometry = system.geometryPacket(
+    prepared,
+    maxWidth: 320,
+    lineHeight: prepared.defaultLineHeight,
+    env: measurementEnv,
+    options: layoutOptions
+)
+let visibleRange = geometry.visibleTextRange
+let isTruncated = geometry.result.isTruncated
+
+let packet = system.drawPacket(
     prepared,
     maxWidth: 320,
     lineHeight: prepared.defaultLineHeight,
@@ -198,8 +217,10 @@ let linkRects = annotations.first.map { coordinateMap.displayedRects(for: $0) } 
 ```
 
 visual parity가 더 중요하면 exact width를 유지하세요.
-근접한 width proposal이 반복되는 self-sizing loop라면 약간의 over-measure를 감수하고 bucketed width를 쓰는 편이 낫습니다.
+근접한 width proposal이 반복되는 self-sizing loop라면 `PreparedTextCacheProfile.balanced`, `.aggressive`, `.stickyPrepared` 같은 preset으로 보수적인 over-measure를 허용하는 편이 낫습니다.
 fractional width jitter 때문에 반복 측정이 흔들리면 pixel-aligned measurement를 고려하세요.
+size, visible range, truncation state만 필요하다면 `PreparedGeometryPacket` 으로 충분합니다.
+attributed line, CTLine, draw-ready rect geometry가 실제로 필요할 때만 `PreparedDrawPacket` 또는 `PreparedTextDisplayPacket` 을 쓰세요.
 line-limited card, summary, feed row를 UIKit 전용 post-processing이 아니라 엔진 차원의 prepared layout 시나리오로 다루고 싶다면 `PreparedTextLayoutOptions` 를 사용하세요.
 
 Phase 2에서는 core engine이 직접 아래 semantics를 소유합니다.
@@ -222,6 +243,15 @@ Phase 3에서는 이 ownership model 위에 네 가지 narrow public differentia
 - `PreparedLabelView` 의 multi-link per-element accessibility
 - `PreparedTextObstacleLayouter` 기반 circle / rounded-rect exclusion layout
 
+이번 라운드는 product scope를 넓히지 않고 engine ownership를 더 다듬습니다.
+
+- measurement-heavy flow는 항상 draw packet까지 만들지 않고 `PreparedGeometryPacket` 에서 멈출 수 있습니다
+- public truncation hook으로 `isTruncated`, `visibleTextRange`, `visibleTextRanges`, 좁은 범위의 `PreparedTruncationToken` customization이 제공됩니다
+- `PreparedTextLineBreakStrategy.urlFriendly` 는 URL / social token이 line 시작이 아니라 mid-line에서 들어와도 delimiter-aware split을 더 오래 유지합니다
+- Stage 0 adoption은 `PreparedTextLegacySupport.adoptionDiagnostics(for:)` 로 설명 가능해지고, `PreparedTextCacheProfile` 로 cache tuning도 public surface가 됩니다
+
+여전히 editor model, browser-grade line-break engine, full `UILabel` replacement가 되려는 것은 아닙니다. 이번 라운드의 목적은 읽기 전용 UIKit-first surface에서 prepared engine의 adoption, measurement, inspection을 더 실용적으로 만드는 것입니다.
+
 여기서 attachment 지원이 뜻하는 범위는 다음과 같습니다.
 
 - read-only inline attachment가 실제 metric이 도착하기 전에도 placeholder bounds를 제공할 수 있다
@@ -243,6 +273,19 @@ coordinate mapping도 exactness를 숨기지 않습니다.
 - whitespace normalization이 들어가는 모드에서는 `.bestEffort`
 - source UTF-16 range를 displayed span / visible line / visible rect로 보내고, 보존 가능한 범위에서 다시 source range로 되돌릴 수 있다
 - `PreparedLabelView` 의 multi-link accessibility도 같은 prepared representation geometry를 사용하고, 안전하게 분리할 수 없을 때만 container-level custom action fallback을 사용한다
+
+public truncation surface도 좁고 정직하게 유지합니다.
+
+- `PreparedTruncationToken` 으로 visible token 문자열을 바꾸고, visible-line attribute 상속 / source tail attribute 상속 / plain 표현 중 하나를 고를 수 있습니다
+- `PreparedGeometryPacket.visibleTextRange`, `PreparedLayoutPacket.visibleTextRange` 는 editor-style selection model 없이도 visible source range를 보고할 수 있습니다
+- `PreparedLabelView.isTruncated()`, `visibleTextRange()`, `visibleTextRanges()` 는 UIKit caller가 "read more", analytics, debug overlay를 prepared content 위에서 직접 만들 수 있게 해줍니다
+
+Stage 0 adoption도 magic이 아니라 explicit inspection으로 유지합니다.
+
+- `PreparedTextLegacySupport.adoptionDiagnostics(for:)` 는 label이 prepared measurement를 썼는지와 그 이유를 설명합니다
+- reason은 single-line exclusion, finite-line semantics requiring Stage 1, interactive exclusion, attributed-link exclusion처럼 rollout-oriented 한 안정적인 범위에 머뭅니다
+- diagnostics는 opt-in snapshot이지 noisy production logging이 아닙니다
+- `PreparedTextCacheProfile` 도 cosmetic enum이 아니라 실제 measurement option preset입니다
 
 obstacle-aware layout도 명확히 narrow 합니다.
 

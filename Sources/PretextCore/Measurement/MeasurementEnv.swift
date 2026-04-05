@@ -43,6 +43,41 @@ public enum PixelMeasurementPolicy: String, Hashable, Sendable {
     case alignedToScale
 }
 
+/// Narrow cache/reuse presets for repeated-width read-only surfaces.
+///
+/// These presets remain conservative wrappers around `PreparedTextMeasurementOptions`.
+/// They do not change layout semantics; they only tune width coalescing and pixel alignment.
+public enum PreparedTextCacheProfile: String, Hashable, Sendable {
+    /// Recommended default for mixed list/card adoption. Coalesces nearby widths conservatively.
+    case balanced
+
+    /// Favors stronger nearby-width reuse for fast-scrolling feeds and repeated self-sizing.
+    case aggressive
+
+    /// Keeps prepared measurement packets sticky across broader width negotiations.
+    case stickyPrepared
+
+    public var measurementOptions: PreparedTextMeasurementOptions {
+        switch self {
+        case .balanced:
+            return PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .bucketed(points: 4),
+                pixelMeasurementPolicy: .alignedToScale
+            )
+        case .aggressive:
+            return PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .bucketed(points: 8),
+                pixelMeasurementPolicy: .alignedToScale
+            )
+        case .stickyPrepared:
+            return PreparedTextMeasurementOptions(
+                widthNormalizationPolicy: .bucketed(points: 12),
+                pixelMeasurementPolicy: .alignedToScale
+            )
+        }
+    }
+}
+
 /// Public measurement knobs for prepared-text sizing and layout reuse.
 public struct PreparedTextMeasurementOptions: Hashable, Sendable {
     public var widthNormalizationPolicy: WidthNormalizationPolicy
@@ -54,6 +89,10 @@ public struct PreparedTextMeasurementOptions: Hashable, Sendable {
     ) {
         self.widthNormalizationPolicy = widthNormalizationPolicy
         self.pixelMeasurementPolicy = pixelMeasurementPolicy
+    }
+
+    public init(cacheProfile: PreparedTextCacheProfile) {
+        self = cacheProfile.measurementOptions
     }
 
     public static let `default` = PreparedTextMeasurementOptions()

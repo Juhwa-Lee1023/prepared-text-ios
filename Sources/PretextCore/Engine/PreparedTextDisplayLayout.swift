@@ -56,25 +56,49 @@ public enum PreparedTextLayoutDirection: String, Hashable, Sendable {
     case rightToLeft
 }
 
+public enum PreparedTruncationTokenAttributeBehavior: String, Hashable, Sendable {
+    case inheritVisibleLineAttributes
+    case inheritSourceTailAttributes
+    case plain
+}
+
+public struct PreparedTruncationToken: Hashable, Sendable {
+    public var text: String
+    public var attributeBehavior: PreparedTruncationTokenAttributeBehavior
+
+    public init(
+        text: String = "…",
+        attributeBehavior: PreparedTruncationTokenAttributeBehavior = .inheritVisibleLineAttributes
+    ) {
+        self.text = text
+        self.attributeBehavior = attributeBehavior
+    }
+
+    public static let `default` = PreparedTruncationToken()
+}
+
 public struct PreparedTextLayoutOptions: Hashable, Sendable {
     public var maximumNumberOfLines: Int
     public var lineBreakMode: PreparedTextLineBreakMode
     public var lineBreakStrategy: PreparedTextLineBreakStrategy
     public var alignment: PreparedTextHorizontalAlignment
     public var layoutDirection: PreparedTextLayoutDirection
+    public var truncationToken: PreparedTruncationToken
 
     public init(
         maximumNumberOfLines: Int = 0,
         lineBreakMode: PreparedTextLineBreakMode = .truncateTail,
         lineBreakStrategy: PreparedTextLineBreakStrategy = .automatic,
         alignment: PreparedTextHorizontalAlignment = .natural,
-        layoutDirection: PreparedTextLayoutDirection = .natural
+        layoutDirection: PreparedTextLayoutDirection = .natural,
+        truncationToken: PreparedTruncationToken = .default
     ) {
         self.maximumNumberOfLines = max(maximumNumberOfLines, 0)
         self.lineBreakMode = lineBreakMode
         self.lineBreakStrategy = lineBreakStrategy
         self.alignment = alignment
         self.layoutDirection = layoutDirection
+        self.truncationToken = truncationToken
     }
 
     public static let `default` = PreparedTextLayoutOptions()
@@ -201,6 +225,14 @@ public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
 
     public var visibleSourceUTF16Ranges: [NSRange] {
         preparedMergedRanges(lines.flatMap(\.visibleSourceUTF16Ranges))
+    }
+
+    public var visibleTextRanges: [NSRange] {
+        visibleSourceUTF16Ranges
+    }
+
+    public var visibleTextRange: NSRange? {
+        preparedSingleRange(from: visibleTextRanges)
     }
 
     public var isExact: Bool {
@@ -375,6 +407,7 @@ public struct PreparedTextDisplayLine {
     public var isTruncated: Bool
     public var consumedSourceUTF16Range: NSRange
     public var sourceSpans: [PreparedTextSourceCoordinateSpan]
+    public var truncationTokenDisplayUTF16Range: NSRange?
 
     public init(
         fragment: LineFragment,
@@ -384,7 +417,8 @@ public struct PreparedTextDisplayLine {
         originX: CGFloat,
         isTruncated: Bool,
         consumedSourceUTF16Range: NSRange,
-        sourceSpans: [PreparedTextSourceCoordinateSpan]
+        sourceSpans: [PreparedTextSourceCoordinateSpan],
+        truncationTokenDisplayUTF16Range: NSRange? = nil
     ) {
         self.fragment = fragment
         self.attributedText = attributedText
@@ -394,6 +428,7 @@ public struct PreparedTextDisplayLine {
         self.isTruncated = isTruncated
         self.consumedSourceUTF16Range = consumedSourceUTF16Range
         self.sourceSpans = sourceSpans
+        self.truncationTokenDisplayUTF16Range = truncationTokenDisplayUTF16Range
     }
 
     public func frame(originY: CGFloat) -> CGRect {
@@ -412,6 +447,14 @@ public struct PreparedTextDisplayLine {
             isTruncated: isTruncated
         )
     }
+
+    public var visibleTextRanges: [NSRange] {
+        preparedMergedRanges(sourceSpans.compactMap(\.sourceUTF16Range))
+    }
+
+    public var visibleTextRange: NSRange? {
+        preparedSingleRange(from: visibleTextRanges)
+    }
 }
 
 public struct PreparedTextDisplayPacket {
@@ -427,6 +470,14 @@ public struct PreparedTextDisplayPacket {
         self.result = result
         self.lines = lines
         self.sourceCoordinateMappingMode = sourceCoordinateMappingMode
+    }
+
+    public var visibleTextRanges: [NSRange] {
+        result.visibleTextRanges
+    }
+
+    public var visibleTextRange: NSRange? {
+        result.visibleTextRange
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
@@ -593,6 +644,7 @@ struct PreparedTextCoreLayoutBuilder {
         var attributedText: NSAttributedString
         var sourceSpans: [PreparedTextSourceCoordinateSpan]
         var isTruncated: Bool
+        var truncationTokenDisplayUTF16Range: NSRange?
     }
 
     private let engine: DefaultPreparedTextEngine
@@ -616,29 +668,33 @@ struct PreparedTextCoreLayoutBuilder {
     }
 
     func build() -> PreparedLayoutPacket {
+        materialize(buildGeometry())
+    }
+
+    func buildGeometry() -> PreparedGeometryPacket {
         let maximumVisibleLines = options.maximumNumberOfLines > 0 ? options.maximumNumberOfLines : Int.max
         guard maximumVisibleLines > 0 else {
-            return PreparedLayoutPacket(
+            return PreparedGeometryPacket(
                 result: LayoutResult(fragments: [], height: 0, maxPaintWidth: 0),
                 lines: [],
                 sourceCoordinateMappingMode: prepared.sourceCoordinateMappingMode
             )
         }
 
-        var drawLines: [PreparedDrawLine] = []
-        drawLines.reserveCapacity(min(maximumVisibleLines, 8))
+        var geometryLines: [PreparedGeometryLine] = []
+        geometryLines.reserveCapacity(min(maximumVisibleLines, 8))
 
         var cursor = LayoutCursor()
         var stoppedEarly = false
 
-        while drawLines.count < maximumVisibleLines,
+        while geometryLines.count < maximumVisibleLines,
               let line = engine.rawNextLine(
                   prepared,
                   cursor: cursor,
                   maxWidth: layoutWidth,
                   strategy: options.lineBreakStrategy
               ) {
-            let reachedLastVisibleLine = options.maximumNumberOfLines > 0 && drawLines.count + 1 == maximumVisibleLines
+            let reachedLastVisibleLine = options.maximumNumberOfLines > 0 && geometryLines.count + 1 == maximumVisibleLines
             if reachedLastVisibleLine,
                engine.rawNextLine(
                    prepared,
@@ -646,35 +702,88 @@ struct PreparedTextCoreLayoutBuilder {
                    maxWidth: layoutWidth,
                    strategy: options.lineBreakStrategy
                ) != nil {
-                drawLines.append(makeFinalVisibleLine(from: line))
+                geometryLines.append(makeFinalVisibleGeometryLine(from: line))
                 stoppedEarly = true
                 break
             }
 
-            drawLines.append(makeVisibleLine(from: line))
+            geometryLines.append(makeVisibleGeometryLine(from: line))
             cursor = line.end
         }
 
-        let fragments = drawLines.map(\.fragment)
-        let visibleRanges = drawLines.flatMap { line in
-            line.sourceSpans.compactMap(\.sourceUTF16Range)
-        }
+        let fragments = geometryLines.map(\.fragment)
+        let visibleRanges = geometryLines.flatMap(\.visibleSourceUTF16Ranges)
         let result = LayoutResult(
             fragments: fragments,
             height: fragments.reduce(0) { $0 + $1.blockAdvance },
             maxPaintWidth: fragments.map(\.paintWidth).max() ?? 0,
-            isTruncated: drawLines.contains(where: \.isTruncated),
+            isTruncated: geometryLines.contains(where: \.isTruncated),
             stoppedEarlyAtMaximumNumberOfLines: stoppedEarly,
             visibleSourceUTF16Ranges: visibleRanges
         )
-        return PreparedLayoutPacket(
+        return PreparedGeometryPacket(
             result: result,
-            lines: drawLines,
+            lines: geometryLines,
             sourceCoordinateMappingMode: prepared.sourceCoordinateMappingMode
         )
     }
 
-    private func makeVisibleLine(from sourceLine: LineResult) -> PreparedDrawLine {
+    func materialize(_ geometryPacket: PreparedGeometryPacket) -> PreparedLayoutPacket {
+        let drawLines = geometryPacket.lines.map(materializeDrawLine(from:))
+        return PreparedLayoutPacket(
+            result: geometryPacket.result,
+            geometry: geometryPacket,
+            lines: drawLines,
+            sourceCoordinateMappingMode: geometryPacket.sourceCoordinateMappingMode
+        )
+    }
+
+    private func materializeDrawLine(from geometryLine: PreparedGeometryLine) -> PreparedDrawLine {
+        switch geometryLine.materialization {
+        case let .visible(sourceLine):
+            let attributedText = engine.attributedLine(prepared, line: sourceLine)
+            let ctLine = CTLineCreateWithAttributedString(attributedText as CFAttributedString)
+            return PreparedDrawLine(
+                fragment: geometryLine.fragment,
+                attributedText: attributedText,
+                ctLine: ctLine,
+                isTruncated: geometryLine.isTruncated,
+                consumedSourceUTF16Range: geometryLine.consumedSourceUTF16Range,
+                sourceSpans: geometryLine.sourceSpans,
+                resolvedAlignment: resolvedAlignment(for: attributedText),
+                truncationTokenDisplayUTF16Range: geometryLine.truncationTokenDisplayUTF16Range
+            )
+
+        case let .truncated(_, materialization):
+            let ctLine = CTLineCreateWithAttributedString(materialization.attributedText as CFAttributedString)
+            return PreparedDrawLine(
+                fragment: geometryLine.fragment,
+                attributedText: materialization.attributedText,
+                ctLine: ctLine,
+                isTruncated: geometryLine.isTruncated,
+                consumedSourceUTF16Range: geometryLine.consumedSourceUTF16Range,
+                sourceSpans: materialization.sourceSpans,
+                resolvedAlignment: resolvedAlignment(for: materialization.attributedText),
+                truncationTokenDisplayUTF16Range: materialization.truncationTokenDisplayUTF16Range
+            )
+
+        case .unavailable:
+            let attributedText = NSAttributedString(string: "")
+            let ctLine = CTLineCreateWithAttributedString(attributedText as CFAttributedString)
+            return PreparedDrawLine(
+                fragment: geometryLine.fragment,
+                attributedText: attributedText,
+                ctLine: ctLine,
+                isTruncated: geometryLine.isTruncated,
+                consumedSourceUTF16Range: geometryLine.consumedSourceUTF16Range,
+                sourceSpans: geometryLine.sourceSpans,
+                resolvedAlignment: .left,
+                truncationTokenDisplayUTF16Range: geometryLine.truncationTokenDisplayUTF16Range
+            )
+        }
+    }
+
+    private func makeVisibleGeometryLine(from sourceLine: LineResult) -> PreparedGeometryLine {
         let attributed = engine.attributedLine(prepared, line: sourceLine)
         let ctLine = CTLineCreateWithAttributedString(attributed as CFAttributedString)
         let fragment = engine.buildFragment(
@@ -686,24 +795,26 @@ struct PreparedTextCoreLayoutBuilder {
         )
         let consumedRange = prepared.nsRange(from: sourceLine.start, to: sourceLine.end)
         let visibleRange = prepared.nsRange(from: sourceLine.start, to: sourceLine.paintEnd)
-        return PreparedDrawLine(
+        let sourceSpans = [
+            PreparedTextSourceCoordinateSpan(
+                displayUTF16Range: NSRange(location: 0, length: attributed.length),
+                sourceUTF16Range: visibleRange
+            ),
+        ]
+        return PreparedGeometryLine(
             fragment: fragment,
-            attributedText: attributed,
-            ctLine: ctLine,
             isTruncated: false,
             consumedSourceUTF16Range: consumedRange,
-            sourceSpans: [
-                PreparedTextSourceCoordinateSpan(
-                    displayUTF16Range: NSRange(location: 0, length: attributed.length),
-                    sourceUTF16Range: visibleRange
-                ),
-            ],
-            resolvedAlignment: resolvedAlignment(for: attributed)
+            visibleSourceUTF16Ranges: preparedMergedRanges(sourceSpans.compactMap(\.sourceUTF16Range)),
+            displayUTF16Length: attributed.length,
+            truncationTokenDisplayUTF16Range: nil,
+            sourceSpans: sourceSpans,
+            materialization: .visible(sourceLine)
         )
     }
 
-    private func makeFinalVisibleLine(from sourceLine: LineResult) -> PreparedDrawLine {
-        let baseLine = makeVisibleLine(from: sourceLine)
+    private func makeFinalVisibleGeometryLine(from sourceLine: LineResult) -> PreparedGeometryLine {
+        let baseLine = makeVisibleGeometryLine(from: sourceLine)
         let remainder = engine.attributedText(
             prepared,
             from: sourceLine.start,
@@ -716,16 +827,26 @@ struct PreparedTextCoreLayoutBuilder {
 
         switch options.lineBreakMode {
         case .wordWrap, .characterWrap:
-            var line = baseLine
-            line.isTruncated = true
-            line.consumedSourceUTF16Range = consumedSourceRange
-            return line
+            return PreparedGeometryLine(
+                fragment: baseLine.fragment,
+                isTruncated: true,
+                consumedSourceUTF16Range: consumedSourceRange,
+                visibleSourceUTF16Ranges: baseLine.visibleSourceUTF16Ranges,
+                displayUTF16Length: baseLine.displayUTF16Length,
+                truncationTokenDisplayUTF16Range: nil,
+                sourceSpans: baseLine.sourceSpans,
+                materialization: .visible(sourceLine)
+            )
         case .clip, .truncateHead, .truncateMiddle, .truncateTail:
             break
         }
 
         let forceTokenWhenFits = truncationSource.length < remainder.length
-        let tokenAttributes = truncationTokenAttributes(sourceLine: baseLine, remainder: truncationSource)
+        let baseAttributedLine = engine.attributedLine(prepared, line: sourceLine)
+        let tokenAttributes = truncationTokenAttributes(
+            sourceLine: baseAttributedLine,
+            remainder: truncationSource
+        )
         let composition = renderedTruncatedLine(
             source: truncationSource,
             sourceBaseOffset: sourceBaseOffset,
@@ -748,14 +869,22 @@ struct PreparedTextCoreLayoutBuilder {
         fragment.descent = max(fragment.descent, descent)
         fragment.leading = max(fragment.leading, leading)
 
-        return PreparedDrawLine(
+        return PreparedGeometryLine(
             fragment: fragment,
-            attributedText: composition.attributedText,
-            ctLine: ctLine,
             isTruncated: composition.isTruncated,
             consumedSourceUTF16Range: consumedSourceRange,
+            visibleSourceUTF16Ranges: preparedMergedRanges(composition.sourceSpans.compactMap(\.sourceUTF16Range)),
+            displayUTF16Length: composition.attributedText.length,
+            truncationTokenDisplayUTF16Range: composition.truncationTokenDisplayUTF16Range,
             sourceSpans: composition.sourceSpans,
-            resolvedAlignment: resolvedAlignment(for: composition.attributedText)
+            materialization: .truncated(
+                sourceLine,
+                PreparedTruncatedLineMaterialization(
+                    attributedText: composition.attributedText,
+                    sourceSpans: composition.sourceSpans,
+                    truncationTokenDisplayUTF16Range: composition.truncationTokenDisplayUTF16Range
+                )
+            )
         )
     }
 
@@ -783,11 +912,16 @@ struct PreparedTextCoreLayoutBuilder {
         forceTokenWhenFits: Bool
     ) -> TruncationComposition {
         guard source.length > 0 else {
-            return TruncationComposition(attributedText: NSAttributedString(string: ""), sourceSpans: [], isTruncated: false)
+            return TruncationComposition(
+                attributedText: NSAttributedString(string: ""),
+                sourceSpans: [],
+                isTruncated: false,
+                truncationTokenDisplayUTF16Range: nil
+            )
         }
 
         let sourceWidth = lineWidth(for: source)
-        let token = NSAttributedString(string: "…", attributes: tokenAttributes)
+        let token = NSAttributedString(string: options.truncationToken.text, attributes: tokenAttributes)
 
         switch lineBreakMode {
         case .wordWrap, .characterWrap:
@@ -799,7 +933,8 @@ struct PreparedTextCoreLayoutBuilder {
                         sourceUTF16Range: NSRange(location: sourceBaseOffset, length: source.length)
                     ),
                 ],
-                isTruncated: false
+                isTruncated: false,
+                truncationTokenDisplayUTF16Range: nil
             )
 
         case .clip:
@@ -812,7 +947,8 @@ struct PreparedTextCoreLayoutBuilder {
                             sourceUTF16Range: NSRange(location: sourceBaseOffset, length: source.length)
                         ),
                     ],
-                    isTruncated: false
+                    isTruncated: false,
+                    truncationTokenDisplayUTF16Range: nil
                 )
             }
             return clippedPrefixComposition(source: source, sourceBaseOffset: sourceBaseOffset, width: width)
@@ -827,7 +963,8 @@ struct PreparedTextCoreLayoutBuilder {
                             sourceUTF16Range: NSRange(location: sourceBaseOffset, length: source.length)
                         ),
                     ],
-                    isTruncated: false
+                    isTruncated: false,
+                    truncationTokenDisplayUTF16Range: nil
                 )
             }
             return truncatedTailComposition(source: source, token: token, sourceBaseOffset: sourceBaseOffset, width: width)
@@ -842,7 +979,8 @@ struct PreparedTextCoreLayoutBuilder {
                             sourceUTF16Range: NSRange(location: sourceBaseOffset, length: source.length)
                         ),
                     ],
-                    isTruncated: false
+                    isTruncated: false,
+                    truncationTokenDisplayUTF16Range: nil
                 )
             }
             return truncatedHeadComposition(source: source, token: token, sourceBaseOffset: sourceBaseOffset, width: width)
@@ -857,7 +995,8 @@ struct PreparedTextCoreLayoutBuilder {
                             sourceUTF16Range: NSRange(location: sourceBaseOffset, length: source.length)
                         ),
                     ],
-                    isTruncated: false
+                    isTruncated: false,
+                    truncationTokenDisplayUTF16Range: nil
                 )
             }
             return truncatedMiddleComposition(source: source, token: token, sourceBaseOffset: sourceBaseOffset, width: width)
@@ -894,7 +1033,8 @@ struct PreparedTextCoreLayoutBuilder {
         return TruncationComposition(
             attributedText: displayed,
             sourceSpans: bestRange.length > 0 ? [span] : [],
-            isTruncated: bestRange.length < source.length
+            isTruncated: bestRange.length < source.length,
+            truncationTokenDisplayUTF16Range: nil
         )
     }
 
@@ -905,7 +1045,12 @@ struct PreparedTextCoreLayoutBuilder {
         width: CGFloat
     ) -> TruncationComposition {
         guard lineWidth(for: token) <= width else {
-            return TruncationComposition(attributedText: NSAttributedString(string: ""), sourceSpans: [], isTruncated: true)
+            return TruncationComposition(
+                attributedText: NSAttributedString(string: ""),
+                sourceSpans: [],
+                isTruncated: true,
+                truncationTokenDisplayUTF16Range: nil
+            )
         }
 
         let table = ComposedCharacterTable(string: source.string)
@@ -944,7 +1089,12 @@ struct PreparedTextCoreLayoutBuilder {
                 sourceUTF16Range: nil
             )
         )
-        return TruncationComposition(attributedText: displayed, sourceSpans: spans, isTruncated: true)
+        return TruncationComposition(
+            attributedText: displayed,
+            sourceSpans: spans,
+            isTruncated: true,
+            truncationTokenDisplayUTF16Range: NSRange(location: prefixLength, length: token.length)
+        )
     }
 
     private func truncatedHeadComposition(
@@ -954,7 +1104,12 @@ struct PreparedTextCoreLayoutBuilder {
         width: CGFloat
     ) -> TruncationComposition {
         guard lineWidth(for: token) <= width else {
-            return TruncationComposition(attributedText: NSAttributedString(string: ""), sourceSpans: [], isTruncated: true)
+            return TruncationComposition(
+                attributedText: NSAttributedString(string: ""),
+                sourceSpans: [],
+                isTruncated: true,
+                truncationTokenDisplayUTF16Range: nil
+            )
         }
 
         let table = ComposedCharacterTable(string: source.string)
@@ -991,7 +1146,12 @@ struct PreparedTextCoreLayoutBuilder {
                 )
             )
         }
-        return TruncationComposition(attributedText: displayed, sourceSpans: spans, isTruncated: true)
+        return TruncationComposition(
+            attributedText: displayed,
+            sourceSpans: spans,
+            isTruncated: true,
+            truncationTokenDisplayUTF16Range: NSRange(location: 0, length: token.length)
+        )
     }
 
     private func truncatedMiddleComposition(
@@ -1001,7 +1161,12 @@ struct PreparedTextCoreLayoutBuilder {
         width: CGFloat
     ) -> TruncationComposition {
         guard lineWidth(for: token) <= width else {
-            return TruncationComposition(attributedText: NSAttributedString(string: ""), sourceSpans: [], isTruncated: true)
+            return TruncationComposition(
+                attributedText: NSAttributedString(string: ""),
+                sourceSpans: [],
+                isTruncated: true,
+                truncationTokenDisplayUTF16Range: nil
+            )
         }
 
         let table = ComposedCharacterTable(string: source.string)
@@ -1029,7 +1194,12 @@ struct PreparedTextCoreLayoutBuilder {
                 }
             )
         }
-        return TruncationComposition(attributedText: candidate.attributedText, sourceSpans: resolvedSpans, isTruncated: true)
+        return TruncationComposition(
+            attributedText: candidate.attributedText,
+            sourceSpans: resolvedSpans,
+            isTruncated: true,
+            truncationTokenDisplayUTF16Range: candidate.truncationTokenDisplayUTF16Range
+        )
     }
 
     private func middleTruncationCandidate(
@@ -1080,7 +1250,12 @@ struct PreparedTextCoreLayoutBuilder {
             )
         }
 
-        return TruncationComposition(attributedText: result, sourceSpans: spans, isTruncated: true)
+        return TruncationComposition(
+            attributedText: result,
+            sourceSpans: spans,
+            isTruncated: true,
+            truncationTokenDisplayUTF16Range: NSRange(location: displayLocation - token.length, length: token.length)
+        )
     }
 
     private func lineWidth(for attributedText: NSAttributedString) -> CGFloat {
@@ -1089,19 +1264,62 @@ struct PreparedTextCoreLayoutBuilder {
     }
 
     private func truncationTokenAttributes(
-        sourceLine: PreparedDrawLine,
+        sourceLine: NSAttributedString,
         remainder: NSAttributedString
     ) -> [NSAttributedString.Key: Any] {
         var attributes: [NSAttributedString.Key: Any]
-        if sourceLine.attributedText.length > 0 {
-            attributes = sourceLine.attributedText.attributes(
-                at: sourceLine.attributedText.length - 1,
+        switch options.truncationToken.attributeBehavior {
+        case .inheritVisibleLineAttributes:
+            if sourceLine.length > 0 {
+                attributes = sourceLine.attributes(
+                    at: sourceLine.length - 1,
+                    effectiveRange: nil
+                )
+            } else if remainder.length > 0 {
+                attributes = remainder.attributes(at: 0, effectiveRange: nil)
+            } else {
+                attributes = [:]
+            }
+
+        case .inheritSourceTailAttributes:
+            if remainder.length > 0 {
+                attributes = remainder.attributes(
+                    at: remainder.length - 1,
+                    effectiveRange: nil
+                )
+            } else if sourceLine.length > 0 {
+                attributes = sourceLine.attributes(
+                    at: sourceLine.length - 1,
+                    effectiveRange: nil
+                )
+            } else {
+                attributes = [:]
+            }
+
+        case .plain:
+            if sourceLine.length > 0 {
+                attributes = sourceLine.attributes(
+                    at: sourceLine.length - 1,
+                    effectiveRange: nil
+                )
+            } else if remainder.length > 0 {
+                attributes = remainder.attributes(at: remainder.length - 1, effectiveRange: nil)
+            } else {
+                attributes = [:]
+            }
+            attributes[.foregroundColor] = nil
+            attributes[.backgroundColor] = nil
+            attributes[.underlineStyle] = nil
+            attributes[.underlineColor] = nil
+            attributes[.strikethroughStyle] = nil
+            attributes[.strikethroughColor] = nil
+        }
+
+        if remainder.length > 0, attributes.isEmpty {
+            attributes = remainder.attributes(
+                at: remainder.length - 1,
                 effectiveRange: nil
             )
-        } else if remainder.length > 0 {
-            attributes = remainder.attributes(at: remainder.length - 1, effectiveRange: nil)
-        } else {
-            attributes = [:]
         }
 
         attributes[.link] = nil
@@ -1416,31 +1634,4 @@ private extension PreparedText {
         let endOffset = utf16Offset(for: end)
         return NSRange(location: startOffset, length: max(endOffset - startOffset, 0))
     }
-}
-
-private func preparedMergedRanges(_ ranges: [NSRange]) -> [NSRange] {
-    let normalized = ranges
-        .filter { $0.length > 0 }
-        .sorted { lhs, rhs in
-            if lhs.location == rhs.location {
-                return lhs.length < rhs.length
-            }
-            return lhs.location < rhs.location
-        }
-
-    guard var current = normalized.first else {
-        return []
-    }
-
-    var merged: [NSRange] = []
-    for range in normalized.dropFirst() {
-        if range.location <= NSMaxRange(current) {
-            current.length = max(NSMaxRange(current), NSMaxRange(range)) - current.location
-        } else {
-            merged.append(current)
-            current = range
-        }
-    }
-    merged.append(current)
-    return merged
 }

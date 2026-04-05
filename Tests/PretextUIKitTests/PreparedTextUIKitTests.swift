@@ -156,6 +156,61 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
+    func testLegacyUILabelAdoptionDiagnosticsExplainFiniteLineExclusion() {
+        PreparedTextLegacySupport.installUILabelSupport(.legacyMultiline)
+
+        let label = UILabel()
+        label.numberOfLines = 2
+        label.attributedText = text("Finite line labels should keep system truncation semantics in Stage 0.")
+
+        let diagnostics = PreparedTextLegacySupport.adoptionDiagnostics(for: label)
+        XCTAssertFalse(diagnostics.usesPreparedMeasurement)
+        XCTAssertEqual(diagnostics.reason, .finiteLineLimitRequiresStage1)
+        XCTAssertEqual(diagnostics.sizing, .sizeThatFits)
+    }
+
+    func testLegacyUILabelAdoptionDiagnosticsExplainMissingInstall() {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.attributedText = text("Adoption diagnostics should explain when support is not installed.")
+
+        let diagnostics = PreparedTextLegacySupport.adoptionDiagnostics(for: label)
+        XCTAssertFalse(diagnostics.usesPreparedMeasurement)
+        XCTAssertEqual(diagnostics.reason, .supportNotInstalled)
+    }
+
+    func testExplicitlyEnabledUILabelRespectsSystemLayoutSizingOptOut() {
+        PreparedTextLegacySupport.installUILabelSupport(
+            LegacyUILabelSupportConfiguration(
+                scope: .optInOnly,
+                swizzleSystemLayoutSizeFitting: false
+            )
+        )
+
+        let label = UILabel().prepared(
+            sourceID: PreparedTextSourceID("ios-stage0-explicit-system-layout-opt-out"),
+            installIfNeeded: false
+        )
+        label.numberOfLines = 0
+        label.attributedText = text("Explicit opt-in should still respect Stage 0 systemLayoutSizeFitting opt-out.")
+
+        let diagnostics = PreparedTextLegacySupport.adoptionDiagnostics(
+            for: label,
+            sizing: .systemLayoutSizeFitting
+        )
+        XCTAssertFalse(diagnostics.usesPreparedMeasurement)
+        XCTAssertEqual(diagnostics.reason, .systemLayoutSizingNotSwizzled)
+
+        let preparedMeasurement = PreparedTextLegacySupport.preparedMeasurementSize(
+            for: label,
+            sizing: .systemLayoutSizeFitting(
+                CGSize(width: 180, height: UIView.layoutFittingCompressedSize.height),
+                .required
+            )
+        )
+        XCTAssertNil(preparedMeasurement)
+    }
+
     func testMeasurementCachingLabelPreparedSetsSourceID() {
         let sourceID = PreparedTextSourceID("ios-measurement-label-prepared")
         let label: MeasurementCachingLabel = MeasurementCachingLabel().prepared(
@@ -176,6 +231,15 @@ final class PreparedTextUIKitTests: XCTestCase {
         )
 
         XCTAssertEqual(label.measurementOptions, measurementOptions)
+    }
+
+    func testMeasurementCachingLabelPreparedAppliesCacheProfile() {
+        let label = MeasurementCachingLabel().prepared(
+            sourceID: PreparedTextSourceID("ios-cache-profile"),
+            cacheProfile: .stickyPrepared
+        )
+
+        XCTAssertEqual(label.measurementOptions, PreparedTextCacheProfile.stickyPrepared.measurementOptions)
     }
 
     func testPreparedLabelViewPreparedAppliesFluentConfiguration() {
@@ -216,6 +280,17 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(view.configuration.measurementOptions, measurementOptions)
     }
 
+    func testPreparedLabelViewPreparedAppliesCacheProfile() {
+        let view = PreparedLabelView().prepared(
+            attributedText: text("PreparedLabelView should accept public cache profile presets."),
+            sourceID: PreparedTextSourceID("ios-stage1-cache-profile"),
+            cacheProfile: .balanced,
+            maxLayoutWidth: 180
+        )
+
+        XCTAssertEqual(view.configuration.measurementOptions, PreparedTextCacheProfile.balanced.measurementOptions)
+    }
+
     func testPreparedLabelViewPreparedAcceptsLayoutOptions() {
         let layoutOptions = PreparedTextLayoutOptions(
             maximumNumberOfLines: 2,
@@ -237,6 +312,28 @@ final class PreparedTextUIKitTests: XCTestCase {
         XCTAssertEqual(view.configuration.lineBreakStrategy, .nativeTypesetterPreferred)
         XCTAssertEqual(view.lineBreakStrategy, .nativeTypesetterPreferred)
         XCTAssertEqual(view.configuration.textAlignment, .center)
+    }
+
+    func testPreparedLabelViewExposesPublicTruncationStateAndVisibleRange() {
+        let view = PreparedLabelView().prepared(
+            attributedText: text("Prepared label views should expose read-only truncation state and visible range helpers."),
+            sourceID: PreparedTextSourceID("ios-public-truncation-state"),
+            maxLayoutWidth: 120,
+            layoutOptions: PreparedTextLayoutOptions(
+                maximumNumberOfLines: 1,
+                lineBreakMode: .truncateTail,
+                lineBreakStrategy: .automatic,
+                alignment: .natural,
+                layoutDirection: .leftToRight,
+                truncationToken: PreparedTruncationToken(text: "[more]", attributeBehavior: .plain)
+            )
+        )
+
+        _ = view.sizeThatFits(CGSize(width: 120, height: CGFloat.greatestFiniteMagnitude))
+
+        XCTAssertEqual(view.isTruncated(), true)
+        XCTAssertNotNil(view.visibleTextRange())
+        XCTAssertFalse(view.visibleTextRanges()?.isEmpty ?? true)
     }
 
     func testPreparedTextViewSugarFromStringCompilesAndRenders() {
