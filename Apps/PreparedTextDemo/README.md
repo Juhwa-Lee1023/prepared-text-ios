@@ -11,6 +11,12 @@ This folder contains the committed iOS demo project used for Apple-platform veri
 The demo app is not a second packaging story. It exists to verify UIKit and SwiftUI behavior on a real Apple runtime before release.
 Its XCTest gate covers the supported simulator baseline subset while the broader host stable corpus remains in the SwiftPM validation runner.
 
+The current showcase also includes narrow public differentiators that sit on top of the prepared layout engine:
+
+- prepared structure inspection with inline attachment, link, mention, and hashtag content
+- source-coordinate-map-driven visible span inspection
+- circle-obstacle exclusion layout for read-only prepared surfaces
+
 ## Open in Xcode
 
 ```bash

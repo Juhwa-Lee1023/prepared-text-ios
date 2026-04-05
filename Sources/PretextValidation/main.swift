@@ -1,7 +1,7 @@
 import CoreText
 import Foundation
 import PretextCore
-#if canImport(UIKit) && canImport(PretextUIKit)
+#if canImport(PretextUIKit)
 import PretextUIKit
 #endif
 
@@ -63,6 +63,7 @@ struct BaselineOutcome {
     var gateFailures: [String]
 }
 
+@MainActor
 struct ValidationSuite {
     private let engine = DefaultPreparedTextEngine()
     private let mode: ValidationMode
@@ -429,6 +430,146 @@ struct ValidationSuite {
             try expect(packet.result.visibleSourceUTF16Ranges.isEmpty == false, "expected visible source ranges for the retained Korean lines")
         }
 
+        execute("attachment-spans-report-placeholder-vs-resolved-state") {
+            let registry = PreparedAttachmentRegistry()
+            let attachmentID = PreparedAttachmentID("validation-attachment")
+            let engine = DefaultPreparedTextEngine(
+                measurer: CachedFramesetterTextMeasurer(),
+                attachmentResolver: registry
+            )
+            let attachment = PreparedTextAttachment(
+                reference: PreparedAttachmentReference(
+                    id: attachmentID,
+                    placeholderBounds: CGRect(x: 0, y: 0, width: 12, height: 10)
+                )
+            )
+            let attributed = NSMutableAttributedString(
+                string: "\u{FFFC}",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+            )
+            attributed.addAttribute(.attachment, value: attachment, range: NSRange(location: 0, length: attributed.length))
+            attributed.addAttribute(.preparedAttachmentReference, value: attachment.reference, range: NSRange(location: 0, length: attributed.length))
+
+            let placeholderPrepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-attachment-source"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            try expect(placeholderPrepared.attachmentSpans.count == 1, "expected one attachment span in placeholder state")
+            try expect(placeholderPrepared.attachmentSpans.first?.isResolved == false, "expected placeholder attachment span to stay unresolved")
+
+            registry.setResolvedAttachment(
+                PreparedResolvedAttachment(
+                    bounds: CGRect(x: 0, y: 0, width: 24, height: 16),
+                    contentIdentity: "validation@2x"
+                ),
+                for: attachmentID,
+                invalidate: []
+            )
+            let resolvedPrepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-attachment-source"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+            try expect(resolvedPrepared.attachmentSpans.first?.isResolved == true, "expected resolved attachment span after registry update")
+            try expectEqual(resolvedPrepared.attachmentSpans.first?.resolvedContentIdentity, "validation@2x", "expected resolved content identity")
+        }
+
+        execute("visible-tokens-follow-truncated-coordinate-map") {
+            let attributed = NSMutableAttributedString(
+                string: "Visible #first\nHidden @second",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+            )
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/first")!, range: NSRange(location: 8, length: 6))
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/second")!, range: NSRange(location: 22, length: 7))
+            let prepared = engine.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-visible-token"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 220,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default,
+                options: PreparedTextLayoutOptions(
+                    maximumNumberOfLines: 1,
+                    lineBreakMode: .truncateTail,
+                    lineBreakStrategy: .automatic,
+                    alignment: .natural,
+                    layoutDirection: .leftToRight
+                )
+            )
+
+            let visibleTokens = packet.visibleTokens(in: prepared)
+            let visibleAnnotations = packet.visibleAnnotations(in: prepared)
+            try expect(visibleTokens.map(\.kind) == [.word, .hashtag], "expected only visible first-line tokens to remain")
+            try expect(visibleAnnotations.map(\.kind) == [.link, .hashtag], "expected only visible first-line annotations to remain")
+        }
+
+        execute("coordinate-map-best-effort-mode-is-explicit") {
+            let prepared = engine.prepare(
+                fixtureText("One   two"),
+                sourceID: PreparedTextSourceID("validation-coordinate-best-effort"),
+                options: PreparedTextOptions(whiteSpaceMode: .cssNormal)
+            )
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: 220,
+                lineHeight: prepared.defaultLineHeight,
+                env: .default
+            )
+
+            let spans = packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: NSRange(location: 0, length: 3))
+            try expect(packet.sourceCoordinateMap.mappingMode == .bestEffort, "expected css-normal mapping to be best-effort")
+            try expect(spans.isEmpty == false, "expected best-effort coordinate mapping to still expose display spans")
+        }
+
+#if canImport(PretextUIKit)
+        execute("obstacle-layout-exposes-public-visible-structure") {
+            let system = PreparedTextSystem(
+                measurer: CachedFramesetterTextMeasurer(),
+                invalidationCenter: PreparedInvalidationCenter()
+            )
+            let layouter = PreparedTextObstacleLayouter(textSystem: system)
+            let attributed = NSMutableAttributedString(
+                string: "Obstacle layout keeps @ops and #prepared readable around an avatar.",
+                attributes: [kCTFontAttributeName as NSAttributedString.Key: CTFontCreateWithName("Helvetica" as CFString, 17, nil)]
+            )
+            let hashtagRange = (attributed.string as NSString).range(of: "#prepared")
+            attributed.addAttribute(.link, value: URL(string: "https://example.com/prepared")!, range: hashtagRange)
+
+            let prepared = system.prepare(
+                attributed,
+                sourceID: PreparedTextSourceID("validation-obstacle"),
+                options: PreparedTextOptions(whiteSpaceMode: .uikitLiteral)
+            )
+
+            let result = layouter.layout(
+                prepared: prepared,
+                in: CGRect(x: 0, y: 0, width: 260, height: 180),
+                obstacles: [
+                    PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: 170, y: 62), radius: 34)),
+                ],
+                lineHeight: prepared.defaultLineHeight,
+                obstaclePadding: 10,
+                minimumSpanWidth: 30
+            )
+
+            let map = result.sourceCoordinateMap(in: prepared)
+            let visibleTokens = result.visibleTokens(in: prepared)
+            let visibleAnnotations = result.visibleAnnotations(in: prepared)
+
+            try expect(result.fragments.isEmpty == false, "expected obstacle layout to emit visible fragments")
+            try expect(result.snapshot.obstacleCount == 1, "expected obstacle snapshot to report the public obstacle count")
+            try expect(map.mappingMode == .exact, "expected obstacle layout to preserve exact coordinate mapping for literal whitespace input")
+            try expect(visibleTokens.contains(where: { $0.kind == .mention }), "expected visible mention token through obstacle layout")
+            try expect(visibleTokens.contains(where: { $0.kind == .hashtag }), "expected visible hashtag token through obstacle layout")
+            try expect(visibleAnnotations.contains(where: { $0.kind == .link }), "expected visible link annotation through obstacle layout")
+        }
+#endif
+
         execute("layout-direction-affects-core-alignment-resolution") {
             let prepared = engine.prepare(
                 fixtureText("Natural alignment should resolve inside the core packet path."),
@@ -640,11 +781,17 @@ struct ValidationSuite {
     }
 }
 
-do {
-    let arguments = try ValidationArguments(arguments: CommandLine.arguments)
-    let suite = ValidationSuite(mode: arguments.mode)
-    try suite.run()
-} catch {
-    fputs("Validation failed: \(error)\n", stderr)
-    exit(1)
+@main
+struct PretextValidationCLI {
+    @MainActor
+    static func main() {
+        do {
+            let arguments = try ValidationArguments(arguments: CommandLine.arguments)
+            let suite = ValidationSuite(mode: arguments.mode)
+            try suite.run()
+        } catch {
+            fputs("Validation failed: \(error)\n", stderr)
+            exit(1)
+        }
+    }
 }

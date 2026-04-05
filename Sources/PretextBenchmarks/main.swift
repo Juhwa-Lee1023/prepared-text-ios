@@ -1,6 +1,9 @@
 import CoreText
 import Foundation
 import PretextCore
+#if canImport(PretextUIKit)
+import PretextUIKit
+#endif
 
 #if canImport(UIKit)
 import UIKit
@@ -79,6 +82,7 @@ func consume(_ value: CGSize) {
 
 @main
 struct PretextBenchmarkCLI {
+    @MainActor
     static func main() {
         let iterations = envInt("PRETEXT_BENCH_ITERATIONS", default: 24, minimum: 4)
         let sweepRepetitions = envInt("PRETEXT_BENCH_SWEEP_REPETITIONS", default: 12, minimum: 2)
@@ -100,7 +104,7 @@ struct PretextBenchmarkCLI {
         lines.append("# Benchmark Results")
         lines.append("")
         lines.append("- Date: \(ISO8601DateFormatter().string(from: Date()))")
-        lines.append("- Runtime: host-side SwiftPM CLI on macOS (CoreText-only benchmark path)")
+        lines.append("- Runtime: host-side SwiftPM CLI on macOS (CoreText plus narrow prepared-layout helper paths)")
         lines.append("- Sample iterations: \(iterations)")
         lines.append("- Width sweep repetitions: \(sweepRepetitions)")
         lines.append("- List-style items: \(listItemCount)")
@@ -292,6 +296,104 @@ struct PretextBenchmarkCLI {
                 "| \(policy.name) | \(format(batch.median)) | \(format(batch.p95)) | \(format(perItemMedian)) | \(percent(diagnostics.layoutPacketCache.hitRate)) | repeated chat/feed/list corpus with promoted display layout options |"
             )
         }
+
+        lines.append("")
+        lines.append("## Prepared Representation Extraction")
+        lines.append("")
+        lines.append("| Fixture | Token Median | Annotation Median | Coordinate Median | Visible Tokens | Mapping |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+
+        for fixture in fixtures where ["token-heavy", "attachment-inline", "long-token"].contains(fixture.name) {
+            let engine = DefaultPreparedTextEngine()
+            let prepared = engine.prepare(
+                fixture.text,
+                sourceID: PreparedTextSourceID("bench-representation-\(fixture.name)"),
+                options: fixture.options
+            )
+            let packet = engine.layoutPacket(
+                prepared,
+                maxWidth: fixture.primaryWidth,
+                lineHeight: fixture.lineHeight,
+                env: .default,
+                options: lineLimitedLayoutOptions
+            )
+
+            let tokenExtraction = batchMeasurements(sampleCount: iterations, repetitionsPerSample: 1) {
+                let tokens = prepared.tokens
+                consume(tokens.count)
+            }
+            let annotationExtraction = batchMeasurements(sampleCount: iterations, repetitionsPerSample: 1) {
+                let annotations = prepared.annotations
+                consume(annotations.count)
+            }
+            let coordinateExtraction = batchMeasurements(sampleCount: iterations, repetitionsPerSample: 1) {
+                let tokens = prepared.tokens
+                var matchCount = 0
+                for token in tokens {
+                    matchCount += packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: token.sourceUTF16Range).count
+                }
+                consume(matchCount)
+            }
+
+            lines.append(
+                "| \(fixture.name) | \(format(tokenExtraction.median)) | \(format(annotationExtraction.median)) | \(format(coordinateExtraction.median)) | \(packet.visibleTokens(in: prepared).count) | \(packet.sourceCoordinateMap.mappingMode.rawValue) |"
+            )
+        }
+
+#if canImport(PretextUIKit)
+        lines.append("")
+        lines.append("## Obstacle Layout Sweep")
+        lines.append("")
+        lines.append("| Fixture | Sweep Median | Sweep p95 | Rows | Split Rows | Notes |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+
+        if let obstacleFixture = fixtures.first(where: { $0.name == "token-heavy" }) {
+            let textSystem = PreparedTextSystem(
+                measurer: CachedFramesetterTextMeasurer(),
+                invalidationCenter: PreparedInvalidationCenter()
+            )
+            let layouter = PreparedTextObstacleLayouter(textSystem: textSystem)
+            let prepared = textSystem.prepare(
+                obstacleFixture.text,
+                sourceID: PreparedTextSourceID("bench-obstacle-\(obstacleFixture.name)"),
+                options: obstacleFixture.options
+            )
+            let widths = jitteredWidths(from: obstacleFixture.sweepWidths)
+            let sweep = sweepMeasurements(
+                sampleCount: iterations,
+                widths: widths,
+                repetitionsPerSample: sweepRepetitions
+            ) {
+                for width in widths {
+                    let result = layouter.layout(
+                        prepared: prepared,
+                        in: CGRect(x: 0, y: 0, width: width, height: 220),
+                        obstacles: [
+                            PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: width * 0.54, y: 84), radius: 34)),
+                        ],
+                        lineHeight: obstacleFixture.lineHeight,
+                        obstaclePadding: 12,
+                        minimumSpanWidth: 30
+                    )
+                    consume(result.fragments.count)
+                    consume(result.snapshot.splitRowCount)
+                }
+            }
+            let sampleResult = layouter.layout(
+                prepared: prepared,
+                in: CGRect(x: 0, y: 0, width: obstacleFixture.primaryWidth, height: 220),
+                obstacles: [
+                    PreparedObstacle(circle: PreparedTextObstacleCircle(center: CGPoint(x: obstacleFixture.primaryWidth * 0.54, y: 84), radius: 34)),
+                ],
+                lineHeight: obstacleFixture.lineHeight,
+                obstaclePadding: 12,
+                minimumSpanWidth: 30
+            )
+            lines.append(
+                "| \(obstacleFixture.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(sampleResult.rowCount) | \(sampleResult.snapshot.splitRowCount) | circle-only exclusion zones over prepared line walking |"
+            )
+        }
+#endif
 
         print(lines.joined(separator: "\n"))
     }
@@ -502,6 +604,16 @@ private func makeFixtures() -> [BenchmarkFixture] {
         return attributed
     }
 
+    func tokenFixtureText() -> NSAttributedString {
+        let attributed = NSMutableAttributedString(
+            string: "Track https://prepared.example.com/cache @layout-team #prepared-text before the card truncates.",
+            attributes: attributes
+        )
+        let urlRange = (attributed.string as NSString).range(of: "https://prepared.example.com/cache")
+        attributed.addAttribute(.link, value: URL(string: "https://prepared.example.com/cache")!, range: urlRange)
+        return attributed
+    }
+
     let englishBody = "Prepared layout reuse should keep self-sizing surfaces stable across repeated width negotiation."
     let korean = "준비된 텍스트 레이아웃은 반복되는 width negotiation 중에도 self-sizing 높이와 줄바꿈을 안정적으로 유지해야 한다."
     let emoji = "🙂🙂🙂 Emoji-heavy message cards should still reuse width-adjacent layouts instead of thrashing line breaks."
@@ -536,6 +648,13 @@ private func makeFixtures() -> [BenchmarkFixture] {
         BenchmarkFixture(
             name: "long-token",
             text: text(longToken),
+            primaryWidth: 260,
+            sweepWidths: [180, 220, 260, 300, 360],
+            lineHeight: 20
+        ),
+        BenchmarkFixture(
+            name: "token-heavy",
+            text: tokenFixtureText(),
             primaryWidth: 260,
             sweepWidths: [180, 220, 260, 300, 360],
             lineHeight: 20

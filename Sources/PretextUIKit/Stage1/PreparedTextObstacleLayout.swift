@@ -1,7 +1,40 @@
-#if canImport(UIKit) && !os(macOS)
+import CoreGraphics
 import CoreText
+import Foundation
 import PretextCore
-import UIKit
+
+public struct PreparedTextObstacleCircle: Hashable {
+    public var center: CGPoint
+    public var radius: CGFloat
+
+    public init(center: CGPoint, radius: CGFloat) {
+        self.center = center
+        self.radius = radius
+    }
+}
+
+public enum PreparedObstacleShape: Hashable {
+    case circle(PreparedTextObstacleCircle)
+}
+
+public struct PreparedObstacle: Hashable {
+    public var shape: PreparedObstacleShape
+
+    public init(shape: PreparedObstacleShape) {
+        self.shape = shape
+    }
+
+    public init(circle: PreparedTextObstacleCircle) {
+        self.shape = .circle(circle)
+    }
+
+    public var circle: PreparedTextObstacleCircle? {
+        switch shape {
+        case let .circle(circle):
+            return circle
+        }
+    }
+}
 
 public struct PreparedTextObstacleLayoutFragment {
     public var rowIndex: Int
@@ -69,6 +102,7 @@ public struct PreparedTextObstacleLayoutResult {
     public var textRect: CGRect
     public var rowHeight: CGFloat
     public var obstacles: [PreparedTextObstacleCircle]
+    public var preparedObstacles: [PreparedObstacle]
     public var fragments: [PreparedTextObstacleLayoutFragment]
     public var splitRowIndices: Set<Int>
     public var rowCount: Int
@@ -77,6 +111,7 @@ public struct PreparedTextObstacleLayoutResult {
         textRect: CGRect,
         rowHeight: CGFloat,
         obstacles: [PreparedTextObstacleCircle],
+        preparedObstacles: [PreparedObstacle]? = nil,
         fragments: [PreparedTextObstacleLayoutFragment],
         splitRowIndices: Set<Int>,
         rowCount: Int
@@ -84,6 +119,7 @@ public struct PreparedTextObstacleLayoutResult {
         self.textRect = textRect
         self.rowHeight = rowHeight
         self.obstacles = obstacles
+        self.preparedObstacles = preparedObstacles ?? obstacles.map(PreparedObstacle.init(circle:))
         self.fragments = fragments
         self.splitRowIndices = splitRowIndices
         self.rowCount = rowCount
@@ -91,12 +127,62 @@ public struct PreparedTextObstacleLayoutResult {
 
     public var snapshot: PreparedTextObstacleLayoutSnapshot {
         PreparedTextObstacleLayoutSnapshot(
-            obstacleCount: obstacles.count,
+            obstacleCount: preparedObstacles.count,
             rowCount: rowCount,
             fragmentCount: fragments.count,
             splitRowCount: splitRowIndices.count,
             renderedStrings: fragments.map(\.plainText)
         )
+    }
+
+    public var visibleSourceUTF16Ranges: [NSRange] {
+        fragments.map(\.sourceUTF16Range)
+    }
+
+    public func sourceCoordinateMap(in prepared: PreparedText) -> PreparedTextSourceCoordinateMap {
+        PreparedTextSourceCoordinateMap(
+            mappingMode: prepared.sourceCoordinateMappingMode,
+            lines: fragments.enumerated().map { index, fragment in
+                let start = prepared.cursor(forUTF16Offset: fragment.sourceUTF16Range.location)
+                let end = prepared.cursor(forUTF16Offset: NSMaxRange(fragment.sourceUTF16Range))
+                return PreparedTextSourceCoordinateLine(
+                    lineIndex: index,
+                    fragment: LineFragment(
+                        start: start,
+                        end: end,
+                        paintEnd: end,
+                        fitWidth: fragment.spanWidth,
+                        paintWidth: fragment.spanWidth,
+                        trailingWhitespaceWidth: 0,
+                        ascent: fragment.ascent,
+                        descent: fragment.descent,
+                        leading: fragment.leading,
+                        blockAdvance: rowHeight
+                    ),
+                    displayUTF16Length: fragment.attributedText.length,
+                    consumedSourceUTF16Range: fragment.sourceUTF16Range,
+                    sourceSpans: [
+                        PreparedTextSourceCoordinateSpan(
+                            displayUTF16Range: NSRange(location: 0, length: fragment.attributedText.length),
+                            sourceUTF16Range: fragment.sourceUTF16Range
+                        ),
+                    ],
+                    isTruncated: false
+                )
+            }
+        )
+    }
+
+    public func visibleTokens(in prepared: PreparedText) -> [PreparedToken] {
+        sourceCoordinateMap(in: prepared).visibleTokens(in: prepared)
+    }
+
+    public func visibleAnnotations(in prepared: PreparedText) -> [PreparedAnnotation] {
+        sourceCoordinateMap(in: prepared).visibleAnnotations(in: prepared)
+    }
+
+    public func visibleAttachmentSpans(in prepared: PreparedText) -> [PreparedAttachmentSpan] {
+        sourceCoordinateMap(in: prepared).visibleAttachmentSpans(in: prepared)
     }
 }
 
@@ -116,11 +202,31 @@ public final class PreparedTextObstacleLayouter {
         obstaclePadding: CGFloat = 12,
         minimumSpanWidth: CGFloat = 30
     ) -> PreparedTextObstacleLayoutResult {
+        layout(
+            prepared: prepared,
+            in: textRect,
+            obstacles: obstacles.map(PreparedObstacle.init(circle:)),
+            lineHeight: lineHeight,
+            obstaclePadding: obstaclePadding,
+            minimumSpanWidth: minimumSpanWidth
+        )
+    }
+
+    public func layout(
+        prepared: PreparedText,
+        in textRect: CGRect,
+        obstacles: [PreparedObstacle],
+        lineHeight: CGFloat? = nil,
+        obstaclePadding: CGFloat = 12,
+        minimumSpanWidth: CGFloat = 30
+    ) -> PreparedTextObstacleLayoutResult {
+        let circles = obstacles.compactMap(\.circle)
         guard !textRect.isNull, textRect.width > 0 else {
             return PreparedTextObstacleLayoutResult(
                 textRect: textRect,
                 rowHeight: 0,
-                obstacles: obstacles,
+                obstacles: circles,
+                preparedObstacles: obstacles,
                 fragments: [],
                 splitRowIndices: [],
                 rowCount: 0
@@ -139,7 +245,7 @@ public final class PreparedTextObstacleLayouter {
             let spans = availableSpans(
                 in: bandRect,
                 textRect: textRect,
-                obstacles: obstacles,
+                obstacles: circles,
                 obstaclePadding: obstaclePadding,
                 minimumSpanWidth: minimumSpanWidth
             )
@@ -213,7 +319,8 @@ public final class PreparedTextObstacleLayouter {
         return PreparedTextObstacleLayoutResult(
             textRect: textRect,
             rowHeight: rowHeight,
-            obstacles: obstacles,
+            obstacles: circles,
+            preparedObstacles: obstacles,
             fragments: fragments,
             splitRowIndices: splitRowIndices,
             rowCount: rowIndex
@@ -332,4 +439,3 @@ private struct PreparedTextObstacleHorizontalSpan: Hashable {
         max(maxX - minX, 0)
     }
 }
-#endif

@@ -4,8 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "prepared-text-ios",
-    // macOS stays enabled only for host-side Core/validation/benchmark tooling.
-    // Public UIKit/SwiftUI surfaces are iOS-only.
+    // macOS stays enabled for host-side Core validation / benchmark tooling and
+    // a narrow subset of prepared-layout helpers such as obstacle layout.
+    // UI adoption surfaces still remain UIKit-first / SwiftUI-bridge APIs.
     platforms: [
         .iOS(.v16),
         .macOS(.v13),
@@ -32,11 +33,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "PretextValidation",
-            dependencies: ["PretextCore"]
+            dependencies: ["PretextCore", "PretextUIKit"]
         ),
         .executableTarget(
             name: "PretextBenchmarks",
-            dependencies: ["PretextCore"]
+            dependencies: ["PretextCore", "PretextUIKit"]
         ),
         .testTarget(
             name: "PretextCoreTests",

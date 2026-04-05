@@ -198,6 +198,28 @@ public struct PreparedTextUIKitDemoItem: Hashable {
             attributes: [.font: bodyFont]
         )
 
+        let attachmentTokenCard = NSMutableAttributedString(
+            string: " \nMedia @ops #prepared-layout keeps a checklist link visible even when the card self-sizes around inline attachment metrics.",
+            attributes: [.font: bodyFont]
+        )
+        let demoAttachment = PreparedTextAttachment(
+            reference: PreparedAttachmentReference(
+                id: PreparedAttachmentID("uikit-demo-attachment"),
+                placeholderBounds: CGRect(x: 0, y: -2, width: 20, height: 14)
+            )
+        )
+        demoAttachment.bounds = demoAttachment.reference.placeholderBounds
+        if let image = UIImage(systemName: "paperclip.circle.fill") {
+            demoAttachment.image = image
+        }
+        attachmentTokenCard.addAttribute(.attachment, value: demoAttachment, range: NSRange(location: 0, length: 1))
+        attachmentTokenCard.addAttribute(.preparedAttachmentReference, value: demoAttachment.reference, range: NSRange(location: 0, length: 1))
+        let checklistRange = (attachmentTokenCard.string as NSString).range(of: "checklist link")
+        if checklistRange.location != NSNotFound, checklistRange.length > 0 {
+            attachmentTokenCard.addAttribute(.link, value: URL(string: "https://example.com/checklist")!, range: checklistRange)
+            attachmentTokenCard.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: checklistRange)
+        }
+
         let baseItems = [
             PreparedTextUIKitDemoItem(
                 title: copy.stage0RolloutTitle,
@@ -294,6 +316,22 @@ public struct PreparedTextUIKitDemoItem: Hashable {
                 ),
                 capabilityTags: ["Center", "2 lines", "Middle truncation"],
                 sourceID: PreparedTextSourceID("uikit-centered-callout")
+            ),
+            PreparedTextUIKitDemoItem(
+                title: "Prepared Structure",
+                subtitle: "Inline attachment, mention, hashtag, and link",
+                note: "Phase 3 keeps attachment metrics, token inspection, and visible-range mapping in the same prepared surface.",
+                body: attachmentTokenCard,
+                surfaceMode: .stage1Prepared,
+                numberOfLines: 3,
+                lineBreakMode: .byTruncatingTail,
+                tintColor: UIColor(red: 0.53, green: 0.35, blue: 0.79, alpha: 1.0),
+                surfaceColor: PreparedUIKitDemoPalette.dynamic(
+                    UIColor(red: 0.95, green: 0.93, blue: 0.99, alpha: 1.0),
+                    UIColor(red: 0.19, green: 0.15, blue: 0.27, alpha: 1.0)
+                ),
+                capabilityTags: ["Attachment", "@mention", "#hashtag", "Coordinate map"],
+                sourceID: PreparedTextSourceID("uikit-prepared-structure")
             ),
         ]
 

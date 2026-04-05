@@ -166,14 +166,21 @@ public struct PreparedDrawLine {
 public struct PreparedLayoutPacket {
     public var result: LayoutResult
     public var lines: [PreparedDrawLine]
+    public var sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode
 
-    public init(result: LayoutResult, lines: [PreparedDrawLine]) {
+    public init(
+        result: LayoutResult,
+        lines: [PreparedDrawLine],
+        sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode = .exact
+    ) {
         self.result = result
         self.lines = lines
+        self.sourceCoordinateMappingMode = sourceCoordinateMappingMode
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
         PreparedTextSourceCoordinateMap(
+            mappingMode: sourceCoordinateMappingMode,
             lines: lines.enumerated().map { index, line in
                 PreparedTextSourceCoordinateLine(
                     lineIndex: index,
@@ -263,6 +270,7 @@ struct PreparedTextCore {
     var defaultLineHeight: CGFloat
     var tabStopAdvance: CGFloat
     var prefersNativeLineBreaking: Bool
+    var preservesSourceCoordinateSpace: Bool
 }
 
 final class PreparedTextStorage {
@@ -310,6 +318,10 @@ public struct PreparedText: Hashable {
 
     public var sourceID: PreparedTextSourceID? {
         storage.sourceID
+    }
+
+    public var sourceCoordinateMappingMode: PreparedTextSourceCoordinateMappingMode {
+        storage.core.preservesSourceCoordinateSpace ? .exact : .bestEffort
     }
 
     public static func == (lhs: PreparedText, rhs: PreparedText) -> Bool {

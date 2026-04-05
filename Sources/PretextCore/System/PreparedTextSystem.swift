@@ -159,6 +159,18 @@ public final class PreparedTextSystem: NSObject {
         )
     }
 
+    public func tokens(in prepared: PreparedText) -> [PreparedToken] {
+        prepared.tokens
+    }
+
+    public func annotations(in prepared: PreparedText) -> [PreparedAnnotation] {
+        prepared.annotations
+    }
+
+    public func attachmentSpans(in prepared: PreparedText) -> [PreparedAttachmentSpan] {
+        prepared.attachmentSpans
+    }
+
     public func attributedText(
         _ prepared: PreparedText,
         from start: LayoutCursor,

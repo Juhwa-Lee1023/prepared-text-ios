@@ -139,7 +139,7 @@ The package product names stay as they are today:
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 and Phase 2 engine improvements
+## Phase 1 to Phase 3 engine improvements
 
 The current library story is stronger than "a text view wrapper".
 It now behaves like a reusable layout engine for read-only repeated-width surfaces:
@@ -149,9 +149,12 @@ It now behaves like a reusable layout engine for read-only repeated-width surfac
 - public pixel-aligned measurement through `PreparedTextMeasurementOptions`
 - explicit invalidation through `PreparedInvalidationCenter`
 - public diagnostics through `PreparedTextDiagnosticsSnapshot`
-- attachment-aware placeholder/resolver plumbing through `PreparedAttachmentRegistry`
+- attachment-aware inline prepared layout through `PreparedAttachmentRegistry`
 - core-owned finite-line display policy through `PreparedTextLayoutOptions`
 - public line-break strategy selection through `PreparedTextLineBreakStrategy`
+- public prepared-structure inspection through `PreparedToken`, `PreparedAnnotation`, and `PreparedAttachmentSpan`
+- practical source/display conversion through `PreparedTextSourceCoordinateMap`
+- reusable circle-obstacle layout through `PreparedTextObstacleLayouter` and `PreparedObstacle`
 
 Example:
 
@@ -189,6 +192,9 @@ let packet = system.layoutPacket(
 )
 let diagnostics = system.diagnosticsSnapshot()
 let coordinateMap = packet.sourceCoordinateMap
+let tokens = packet.visibleTokens(in: prepared)
+let annotations = packet.visibleAnnotations(in: prepared)
+let attachmentSpans = packet.visibleAttachmentSpans(in: prepared)
 ```
 
 Use exact widths when visual parity matters more than cache reuse.
@@ -208,15 +214,39 @@ In Phase 2, the core engine itself owns:
 That means a 2-line tail-truncated feed card now has its own prepared layout key and reuse behavior in the core engine.
 `PreparedLabelView` and `PreparedTextView` consume that result for rendering instead of inventing truncation semantics on their own.
 
-Attachment support is now identity-aware and placeholder-aware, but it is still not a full async attachment rendering framework.
+Phase 3 builds on that ownership model with four narrow public differentiators:
 
-Additional narrow surfaces also exist on top of the Phase 1 engine:
+- attachment-aware prepared layout through placeholder metrics, resolved metrics, attachment identity, and targeted invalidation in `PreparedAttachmentRegistry`
+- prepared token and annotation inspection through `PreparedText.tokens`, `PreparedText.annotations`, and `PreparedText.attachmentSpans`
+- source/display coordinate conversion through `PreparedTextSourceCoordinateMap`
+- circle-only exclusion layout through `PreparedTextObstacleLayouter`
 
-- `PreparedTextLayoutOptions` for explicit read-only line limits, truncation, alignment, and layout direction
-- `PreparedTextSourceCoordinateMap` for displayed source-span inspection
-- `PreparedTextObstacleLayouter` for reusable circle-obstacle exclusion layout
+Attachment support now means:
 
-Those APIs remain intentionally narrow follow-up surfaces. They do not change the core product story into a broad text toolkit, and the main value is still deterministic reuse, bounded caches, explicit invalidation, and core-owned read-only display policy.
+- inline read-only attachments can contribute placeholder bounds before real metrics are available
+- resolved metrics and content identity participate in prepared layout reuse
+- registry updates can target only the affected prepared source IDs for invalidation
+- Stage 1 renderers consume those resolved metrics without pretending to be a full async media framework
+
+Token and annotation APIs are intentionally narrow:
+
+- links, mentions, hashtags, attachment spans, and prepared word-like spans can be inspected deterministically
+- visible token and annotation filtering works through the packet or coordinate map after truncation
+- the package still does not become an editor model, syntax highlighter framework, or generalized NLP/entity system
+
+Coordinate mapping is also explicit about exactness:
+
+- coordinate-preserving modes expose `.exact` mapping
+- whitespace-normalizing modes expose `.bestEffort` mapping instead of pretending reverse conversion is perfect
+- packet and map helpers can translate source UTF-16 ranges to displayed spans, visible lines, and back where the prepared representation preserves enough information
+
+Obstacle-aware layout remains intentionally narrow:
+
+- `PreparedTextObstacleLayouter` is for repeated-width read-only layout around circle exclusion zones
+- it fits card, avatar, and decorative avoidance scenarios
+- it does not claim arbitrary publication layout, scene-graph composition, or browser-grade flowing text
+
+These surfaces remain narrow prepared-representation features. They do not change the product story into a broad text toolkit, and the main value is still deterministic reuse, bounded caches, explicit invalidation, core-owned read-only display policy, and practical prepared-structure inspection.
 
 ## Development
 

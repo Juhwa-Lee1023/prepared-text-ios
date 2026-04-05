@@ -1,7 +1,7 @@
 # Validation
 
 prepared-text-ios ships two validation paths and one Apple-platform verification path.
-The current host coverage locks down the stable Phase 1 and Phase 2 release story:
+The current host coverage locks down the stable Phase 1 to Phase 3 release story:
 
 - deterministic attributed-range cache identity
 - width bucketization and pixel alignment behavior
@@ -9,6 +9,9 @@ The current host coverage locks down the stable Phase 1 and Phase 2 release stor
 - core-owned finite-line layout, truncation, and visible-range semantics
 - layout-direction-sensitive alignment resolution
 - public line-break strategy selection on supported narrow surfaces
+- prepared token / annotation visibility through truncation-aware coordinate mapping
+- explicit exact-vs-best-effort source/display mapping semantics
+- public obstacle-layout helpers over prepared text on supported host/tooling builds
 
 ## Host report
 
@@ -36,6 +39,13 @@ The semantic check section now includes direct engine-level finite-line assertio
 - `url-friendly-line-limit-preserves-structured-breaks`
 - `korean-finite-line-truncation-remains-core-owned`
 - `layout-direction-affects-core-alignment-resolution`
+
+Phase 3 semantic checks also run in the host validation path:
+
+- `attachment-spans-report-placeholder-vs-resolved-state`
+- `visible-tokens-follow-truncated-coordinate-map`
+- `coordinate-map-best-effort-mode-is-explicit`
+- `obstacle-layout-exposes-public-visible-structure`
 
 ## Host gate
 
@@ -100,6 +110,12 @@ The simulator baseline subset is intentionally narrower than the host stable cor
 - `prewrap-tabs`
 - `soft-hyphen`
 
+The simulator XCTest path also keeps the promoted UIKit-facing Phase 3 consumers honest:
+
+- `PreparedLabelView` visible token / annotation / attachment helpers
+- `PreparedTextObstacleLayouter` public result, coordinate-map, and visible-token helpers
+- demo-backed read-only attachment and structured-span samples
+
 ## Release usage
 
 For a release candidate or final tag, run:
@@ -124,5 +140,5 @@ For performance verification, pair the validation gate with:
 ./scripts/run-benchmarks.sh
 ```
 
-The benchmark report now compares exact widths, 4pt bucketed widths, and pixel-aligned measurement across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, and long-text fixtures.
-It also includes line-limited and URL-heavy scenarios so Phase 2 finite-line behavior is exercised outside ad hoc UI tests.
+The benchmark report now compares exact widths, 4pt bucketed widths, and pixel-aligned measurement across Latin, Korean/CJK, emoji-heavy, long-token, attachment-inline, token-heavy, and long-text fixtures.
+It also includes line-limited and URL-heavy scenarios so Phase 2 finite-line behavior is exercised outside ad hoc UI tests, plus prepared-representation extraction and obstacle-layout rows for Phase 3 public surfaces.
