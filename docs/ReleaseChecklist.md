@@ -29,6 +29,7 @@ swift run PretextBenchmarks
   - semantic checks must pass
   - the stable host gate corpus must keep exact line counts, no divergent strict lines, and `heightDelta <= 1pt`
   - core-owned finite-line / truncation / layout-direction semantic checks must stay green
+  - 1-line truncation, URL-heavy finite-line, and Korean finite-line semantic checks must stay green
 - `swift run PretextBenchmarks`
   - `.build/reports/benchmark-results.md` must regenerate and be non-empty
   - release review should use the default benchmark sample counts, not a reduced local smoke profile
