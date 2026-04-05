@@ -9,6 +9,50 @@ public enum PreparedUILabelParticipation: Hashable, Sendable {
     case disabled
 }
 
+public enum PreparedUILabelSizingProbe: String, Hashable, Sendable {
+    case intrinsic
+    case sizeThatFits
+    case systemLayoutSizeFitting
+}
+
+public enum PreparedUILabelAdoptionReason: String, Hashable, Sendable {
+    case eligible
+    case supportNotInstalled
+    case explicitlyDisabled
+    case optInRequired
+    case singleLineExcluded
+    case finiteLineLimitRequiresStage1
+    case interactiveExcluded
+    case attributedLinksExcluded
+    case missingText
+    case systemLayoutSizingNotSwizzled
+}
+
+public struct PreparedUILabelAdoptionDiagnostics: Hashable, Sendable {
+    public var participation: PreparedUILabelParticipation
+    public var sizing: PreparedUILabelSizingProbe
+    public var configuration: LegacyUILabelSupportConfiguration?
+    public var usesPreparedMeasurement: Bool
+    public var reason: PreparedUILabelAdoptionReason
+    public var sourceID: PreparedTextSourceID?
+
+    public init(
+        participation: PreparedUILabelParticipation,
+        sizing: PreparedUILabelSizingProbe,
+        configuration: LegacyUILabelSupportConfiguration?,
+        usesPreparedMeasurement: Bool,
+        reason: PreparedUILabelAdoptionReason,
+        sourceID: PreparedTextSourceID?
+    ) {
+        self.participation = participation
+        self.sizing = sizing
+        self.configuration = configuration
+        self.usesPreparedMeasurement = usesPreparedMeasurement
+        self.reason = reason
+        self.sourceID = sourceID
+    }
+}
+
 public struct LegacyUILabelSupportConfiguration: Hashable, Sendable {
     public enum Scope: Hashable, Sendable {
         case optInOnly
@@ -72,6 +116,51 @@ public enum PreparedTextLegacySupport {
     }
 
     @MainActor
+    public static func adoptionDiagnostics(
+        for label: UILabel,
+        sizing: PreparedUILabelSizingProbe = .sizeThatFits
+    ) -> PreparedUILabelAdoptionDiagnostics {
+        let participation = label.preparedParticipation
+        guard let configuration = currentUILabelSupportConfiguration() else {
+            return PreparedUILabelAdoptionDiagnostics(
+                participation: participation,
+                sizing: sizing,
+                configuration: nil,
+                usesPreparedMeasurement: false,
+                reason: .supportNotInstalled,
+                sourceID: nil
+            )
+        }
+
+        let evaluation = adoptionEvaluation(
+            for: label,
+            configuration: configuration,
+            sizing: sizing
+        )
+        switch evaluation {
+        case let .adopted(sourceID):
+            return PreparedUILabelAdoptionDiagnostics(
+                participation: participation,
+                sizing: sizing,
+                configuration: configuration,
+                usesPreparedMeasurement: true,
+                reason: .eligible,
+                sourceID: sourceID
+            )
+
+        case let .excluded(reason):
+            return PreparedUILabelAdoptionDiagnostics(
+                participation: participation,
+                sizing: sizing,
+                configuration: configuration,
+                usesPreparedMeasurement: false,
+                reason: reason,
+                sourceID: nil
+            )
+        }
+    }
+
+    @MainActor
     static func preparedMeasurementSize(for label: UILabel, sizing: PreparedLegacyLabelSizing) -> CGSize? {
         guard let measurementRequest = measurementRequest(for: label, sizing: sizing) else {
             return nil
@@ -113,66 +202,32 @@ public enum PreparedTextLegacySupport {
         for label: UILabel,
         sizing: PreparedLegacyLabelSizing
     ) -> PreparedLegacyMeasurementRequest? {
-        let participation = label.preparedParticipation
         guard let configuration = currentUILabelSupportConfiguration() else {
             return nil
         }
 
-        let sourceID: PreparedTextSourceID?
-        switch participation {
-        case .disabled:
-            return nil
-        case let .enabled(explicitSourceID):
-            sourceID = explicitSourceID
-        case .inheritGlobal:
-            guard isEligibleForGlobalSupport(label, configuration: configuration) else {
-                return nil
-            }
-            sourceID = nil
-        }
+        let evaluation = adoptionEvaluation(
+            for: label,
+            configuration: configuration,
+            sizing: sizing.probe
+        )
 
-        if case .systemLayoutSizeFitting = sizing, !configuration.swizzleSystemLayoutSizeFitting {
+        let sourceID: PreparedTextSourceID?
+        switch evaluation {
+        case let .adopted(resolvedSourceID):
+            sourceID = resolvedSourceID
+        case .excluded:
             return nil
         }
 
         guard let attributedText = label.pretextMeasurementAttributedText(), attributedText.length > 0 else {
             return nil
         }
-
         return PreparedLegacyMeasurementRequest(
             attributedText: attributedText,
             width: sizing.resolvedWidth(for: label),
             sourceID: sourceID
         )
-    }
-
-    @MainActor
-    private static func isEligibleForGlobalSupport(
-        _ label: UILabel,
-        configuration: LegacyUILabelSupportConfiguration
-    ) -> Bool {
-        switch configuration.scope {
-        case .optInOnly:
-            return false
-        case .multilineOnly:
-            // The Stage 0 UILabel rollout only measures full multiline copy.
-            // Finite line limits keep truncation semantics in the system stack.
-            guard label.numberOfLines == 0 else {
-                return false
-            }
-        case .allLabels:
-            break
-        }
-
-        if configuration.excludeInteractiveLabels, label.pretextIsInteractive {
-            return false
-        }
-
-        if configuration.excludeAttributedLinks, label.pretextContainsAttributedLinks {
-            return false
-        }
-
-        return true
     }
 
     private static func swizzleUILabelMethodsIfNeeded() {
@@ -202,6 +257,67 @@ public enum PreparedTextLegacySupport {
             PreparedTextLegacyUILabelState.didSwizzleMethods = true
         }
     }
+
+    @MainActor
+    private static func adoptionEvaluation(
+        for label: UILabel,
+        configuration: LegacyUILabelSupportConfiguration,
+        sizing: PreparedUILabelSizingProbe
+    ) -> PreparedUILabelAdoptionEvaluation {
+        let participation = label.preparedParticipation
+        switch participation {
+        case .disabled:
+            return .excluded(.explicitlyDisabled)
+
+        case let .enabled(explicitSourceID):
+            guard let attributedText = label.pretextMeasurementAttributedText(), attributedText.length > 0 else {
+                return .excluded(.missingText)
+            }
+            _ = attributedText
+            return .adopted(explicitSourceID)
+
+        case .inheritGlobal:
+            switch configuration.scope {
+            case .optInOnly:
+                return .excluded(.optInRequired)
+            case .multilineOnly:
+                if label.numberOfLines == 1 {
+                    return .excluded(.singleLineExcluded)
+                }
+                if label.numberOfLines > 1 {
+                    return .excluded(.finiteLineLimitRequiresStage1)
+                }
+            case .allLabels:
+                break
+            }
+
+            if configuration.excludeInteractiveLabels, label.pretextIsInteractive {
+                return .excluded(.interactiveExcluded)
+            }
+
+            if configuration.excludeAttributedLinks, label.pretextContainsAttributedLinks {
+                return .excluded(.attributedLinksExcluded)
+            }
+        }
+
+        if sizing == .systemLayoutSizeFitting, !configuration.swizzleSystemLayoutSizeFitting {
+            return .excluded(.systemLayoutSizingNotSwizzled)
+        }
+
+        guard let attributedText = label.pretextMeasurementAttributedText(), attributedText.length > 0 else {
+            return .excluded(.missingText)
+        }
+        _ = attributedText
+
+        let sourceID: PreparedTextSourceID?
+        switch participation {
+        case let .enabled(explicitSourceID):
+            sourceID = explicitSourceID
+        case .inheritGlobal, .disabled:
+            sourceID = nil
+        }
+        return .adopted(sourceID)
+    }
 }
 
 private enum PreparedTextLegacyUILabelState {
@@ -225,10 +341,26 @@ private struct PreparedLegacyMeasurementRequest {
     var sourceID: PreparedTextSourceID?
 }
 
+private enum PreparedUILabelAdoptionEvaluation {
+    case adopted(PreparedTextSourceID?)
+    case excluded(PreparedUILabelAdoptionReason)
+}
+
 enum PreparedLegacyLabelSizing {
     case intrinsic
     case sizeThatFits(CGSize)
     case systemLayoutSizeFitting(CGSize, UILayoutPriority)
+
+    var probe: PreparedUILabelSizingProbe {
+        switch self {
+        case .intrinsic:
+            return .intrinsic
+        case .sizeThatFits:
+            return .sizeThatFits
+        case .systemLayoutSizeFitting:
+            return .systemLayoutSizeFitting
+        }
+    }
 
     @MainActor
     func resolvedWidth(for label: UILabel) -> CGFloat {

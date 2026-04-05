@@ -313,6 +313,21 @@ public final class PreparedLabelView: UIView {
         return resolvedLayoutPacket(width: layoutWidth)?.sourceCoordinateMap
     }
 
+    public func isTruncated() -> Bool? {
+        let layoutWidth = resolvedDrawWidth()
+        return resolvedGeometryPacket(width: layoutWidth)?.result.isTruncated
+    }
+
+    public func visibleTextRange() -> NSRange? {
+        let layoutWidth = resolvedDrawWidth()
+        return resolvedGeometryPacket(width: layoutWidth)?.visibleTextRange
+    }
+
+    public func visibleTextRanges() -> [NSRange]? {
+        let layoutWidth = resolvedDrawWidth()
+        return resolvedGeometryPacket(width: layoutWidth)?.visibleTextRanges
+    }
+
     public func visibleTokens() -> [PreparedToken]? {
         guard let prepared = resolvedPreparedText(),
               let map = sourceCoordinateMap() else {
@@ -359,7 +374,7 @@ public final class PreparedLabelView: UIView {
     }
 
     private func measuredSize(width: CGFloat, preserveProposedWidth: Bool) -> CGSize {
-        guard let packet = resolvedDisplayPacket(layoutWidth: width, containerWidth: width) else {
+        guard let packet = resolvedGeometryPacket(width: width) else {
             return .zero
         }
 
@@ -369,7 +384,7 @@ public final class PreparedLabelView: UIView {
 
     private func naturalMeasuredSize() -> CGSize {
         let width = resolvedMeasurementWidth(fallbackToSingleLine: true)
-        guard let packet = resolvedDisplayPacket(layoutWidth: width, containerWidth: width) else {
+        guard let packet = resolvedGeometryPacket(width: width) else {
             return .zero
         }
 
@@ -426,6 +441,20 @@ public final class PreparedLabelView: UIView {
         }
         let lineHeight = configuration.lineHeightOverride ?? prepared.defaultLineHeight
         return textSystem.layoutPacket(
+            prepared,
+            maxWidth: width,
+            lineHeight: lineHeight,
+            env: measurementEnv(),
+            options: resolvedLayoutOptions()
+        )
+    }
+
+    private func resolvedGeometryPacket(width: CGFloat) -> PreparedGeometryPacket? {
+        guard let prepared = resolvedPreparedText() else {
+            return nil
+        }
+        let lineHeight = configuration.lineHeightOverride ?? prepared.defaultLineHeight
+        return textSystem.geometryPacket(
             prepared,
             maxWidth: width,
             lineHeight: lineHeight,

@@ -58,8 +58,12 @@ PreparedTextLegacySupport.installUILabelSupport(.legacyMultiline)
 
 let legacyLabel = UILabel().prepared()
 legacyLabel.attributedText = NSAttributedString(string: "Prepared body copy")
+let adoption = PreparedTextLegacySupport.adoptionDiagnostics(for: legacyLabel)
 
-let stage0Label = MeasurementCachingLabel().prepared(sourceID: .init("feed/body"))
+let stage0Label = MeasurementCachingLabel().prepared(
+    sourceID: .init("feed/body"),
+    cacheProfile: .balanced
+)
 stage0Label.attributedText = NSAttributedString(string: "Prepared body copy")
 
 let label = PreparedLabelView().prepared(
@@ -139,7 +143,7 @@ The package product names stay as they are today:
 - `PretextValidation`
 - `PretextBenchmarks`
 
-## Phase 1 to Phase 3 engine improvements
+## Current engine improvements
 
 The current library story is stronger than "a text view wrapper".
 It now behaves like a reusable layout engine for read-only repeated-width surfaces:
@@ -147,6 +151,7 @@ It now behaves like a reusable layout engine for read-only repeated-width surfac
 - deterministic attributed-range cache identity for Stage 0 and Stage 1 reuse
 - explicit width normalization through `WidthNormalizationPolicy`
 - public pixel-aligned measurement through `PreparedTextMeasurementOptions`
+- public cache profile presets through `PreparedTextCacheProfile`
 - explicit invalidation through `PreparedInvalidationCenter`
 - public diagnostics through `PreparedTextDiagnosticsSnapshot`
 - attachment-aware inline prepared layout through `PreparedAttachmentResolver` and `PreparedAttachmentRegistry`
@@ -155,6 +160,10 @@ It now behaves like a reusable layout engine for read-only repeated-width surfac
 - public prepared-structure inspection through `PreparedToken`, `PreparedAnnotation`, and `PreparedAttachmentSpan`
 - practical source/display conversion and rect queries through `PreparedTextSourceCoordinateMap`
 - reusable circle / rounded-rect obstacle layout through `PreparedTextObstacleLayouter` and `PreparedObstacle`
+- measurement-first geometry packets through `PreparedGeometryPacket`
+- draw-ready packet materialization through `PreparedDrawPacket`
+- public truncation hooks such as `PreparedTruncationToken`, `PreparedGeometryPacket.visibleTextRange`, and `PreparedLabelView.isTruncated()`
+- Stage 0 rollout diagnostics through `PreparedTextLegacySupport.adoptionDiagnostics(for:)`
 
 Example:
 
@@ -183,7 +192,17 @@ let layoutOptions = PreparedTextLayoutOptions(
     layoutDirection: .leftToRight
 )
 
-let packet = system.layoutPacket(
+let geometry = system.geometryPacket(
+    prepared,
+    maxWidth: 320,
+    lineHeight: prepared.defaultLineHeight,
+    env: measurementEnv,
+    options: layoutOptions
+)
+let visibleRange = geometry.visibleTextRange
+let isTruncated = geometry.result.isTruncated
+
+let packet = system.drawPacket(
     prepared,
     maxWidth: 320,
     lineHeight: prepared.defaultLineHeight,
@@ -199,8 +218,10 @@ let linkRects = annotations.first.map { coordinateMap.displayedRects(for: $0) } 
 ```
 
 Use exact widths when visual parity matters more than cache reuse.
-Use bucketed widths when self-sizing loops keep probing nearby proposals and a slight over-measure is acceptable.
+Use `PreparedTextCacheProfile.balanced`, `.aggressive`, or `.stickyPrepared` when self-sizing loops keep probing nearby proposals and a controlled over-measure is acceptable.
 Use pixel-aligned measurement when fractional width jitter is causing unstable repeated measurement.
+Use `PreparedGeometryPacket` when size, visible range, line count, or truncation state are enough.
+Use `PreparedDrawPacket` or `PreparedTextDisplayPacket` only when attributed lines, CTLine-backed drawing, or draw-ready rect geometry are actually needed.
 Use `PreparedTextLayoutOptions` when a line-limited card, summary block, or feed row should be a first-class engine layout scenario rather than UIKit-only post-processing.
 
 In Phase 2, the core engine itself owns:
@@ -223,6 +244,15 @@ Phase 3 builds on that ownership model with four narrow public differentiators:
 - per-link accessibility elements in `PreparedLabelView` when multiple visible links remain on screen
 - circle and rounded-rect exclusion layout through `PreparedTextObstacleLayouter`
 
+The current round deepens engine ownership without broadening the product:
+
+- measurement-heavy flows can stop at `PreparedGeometryPacket` instead of always materializing draw packets
+- public truncation hooks expose `isTruncated`, `visibleTextRange`, `visibleTextRanges`, and a narrow `PreparedTruncationToken` customization point
+- `PreparedTextLineBreakStrategy.urlFriendly` now keeps delimiter-aware URL and social-token splits more often when a structured token begins mid-line
+- Stage 0 adoption can be inspected through `PreparedTextLegacySupport.adoptionDiagnostics(for:)`, while `PreparedTextCacheProfile` keeps cache tuning public and conservative
+
+This is still not an editor model, browser-grade line-break engine, or full `UILabel` replacement. The round is about making the prepared engine easier to adopt, measure, and inspect on read-only UIKit-first surfaces.
+
 Attachment support now means:
 
 - inline read-only attachments can contribute placeholder bounds before real metrics are available
@@ -244,6 +274,19 @@ Coordinate mapping is also explicit about exactness:
 - whitespace-normalizing modes expose `.bestEffort` mapping instead of pretending reverse conversion is perfect
 - packet and map helpers can translate source UTF-16 ranges to displayed spans, visible lines, visible rects, and back where the prepared representation preserves enough information
 - `PreparedLabelView` builds its multi-link accessibility geometry from that same prepared representation, and falls back to container-level custom actions only when separate visible elements cannot be formed safely
+
+The public truncation surface stays narrow and renderer-facing:
+
+- `PreparedTruncationToken` lets callers swap the visible token text and choose whether the token inherits visible-line attributes, tail-source attributes, or a plain neutral presentation
+- `PreparedGeometryPacket.visibleTextRange` and `PreparedLayoutPacket.visibleTextRange` report visible source ranges without forcing an editor-like selection model
+- `PreparedLabelView.isTruncated()`, `visibleTextRange()`, and `visibleTextRanges()` give UIKit callers a direct path for "read more", analytics, or debug overlays on already prepared content
+
+Stage 0 adoption also stays explicit rather than magical:
+
+- `PreparedTextLegacySupport.adoptionDiagnostics(for:)` explains whether a label used prepared measurement and why
+- reasons stay stable and rollout-oriented, such as single-line exclusion, finite-line semantics requiring Stage 1, interactive exclusions, or attributed-link exclusions
+- diagnostics are opt-in snapshots, not noisy production logging
+- `PreparedTextCacheProfile` is a small preset layer over real measurement options, not a cosmetic enum
 
 Obstacle-aware layout remains intentionally narrow:
 

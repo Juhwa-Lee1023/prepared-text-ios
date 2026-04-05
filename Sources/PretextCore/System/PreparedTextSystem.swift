@@ -123,6 +123,26 @@ public final class PreparedTextSystem: NSObject {
         engine.layoutPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
     }
 
+    public func geometryPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions = .default
+    ) -> PreparedGeometryPacket {
+        engine.geometryPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
+    }
+
+    public func drawPacket(
+        _ prepared: PreparedText,
+        maxWidth: CGFloat,
+        lineHeight: CGFloat,
+        env: MeasurementEnv = .default,
+        options: PreparedTextLayoutOptions = .default
+    ) -> PreparedDrawPacket {
+        engine.drawPacket(prepared, maxWidth: maxWidth, lineHeight: lineHeight, env: env, options: options)
+    }
+
     public func displayLayoutPacket(
         _ prepared: PreparedText,
         maxWidth: CGFloat,

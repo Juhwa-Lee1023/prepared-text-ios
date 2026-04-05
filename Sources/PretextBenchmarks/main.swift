@@ -216,6 +216,72 @@ struct PretextBenchmarkCLI {
         }
 
         lines.append("")
+        lines.append("## Geometry vs Draw Packet Sweep")
+        lines.append("")
+        lines.append("| Fixture | Packet | Sweep Median | Sweep p95 | Cache Hit Rate | Reuse Count | Cache Cost | Notes |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |")
+
+        let geometryPolicy = policies.first(where: { $0.name == "balanced" })?.env ?? .default
+        for fixture in fixtures where ["attachment-inline", "token-heavy", "long-text"].contains(fixture.name) {
+            let geometryEngine = DefaultPreparedTextEngine()
+            let geometryPrepared = geometryEngine.prepare(
+                fixture.text,
+                sourceID: PreparedTextSourceID("bench-geometry-\(fixture.name)"),
+                options: fixture.options
+            )
+            let geometryWidths = jitteredWidths(from: fixture.sweepWidths)
+            let geometrySweep = sweepMeasurements(
+                sampleCount: iterations,
+                widths: geometryWidths,
+                repetitionsPerSample: sweepRepetitions
+            ) {
+                for width in geometryWidths {
+                    let packet = geometryEngine.geometryPacket(
+                        geometryPrepared,
+                        maxWidth: width,
+                        lineHeight: fixture.lineHeight,
+                        env: geometryPolicy,
+                        options: lineLimitedLayoutOptions
+                    )
+                    consume(packet.result.lineCount)
+                    consume(packet.result.height)
+                }
+            }
+            let geometryDiagnostics = geometryEngine.diagnosticsSnapshot()
+            lines.append(
+                "| \(fixture.name) | geometry | \(format(geometrySweep.median)) | \(format(geometrySweep.p95)) | \(percent(geometryDiagnostics.geometryPacketCache.hitRate)) | \(geometryDiagnostics.geometryPacketReuseCount) | \(geometryDiagnostics.geometryPacketCache.currentCost) | measurement-only size/visible-range path without draw packet cache population |"
+            )
+
+            let drawEngine = DefaultPreparedTextEngine()
+            let drawPrepared = drawEngine.prepare(
+                fixture.text,
+                sourceID: PreparedTextSourceID("bench-draw-\(fixture.name)"),
+                options: fixture.options
+            )
+            let drawSweep = sweepMeasurements(
+                sampleCount: iterations,
+                widths: geometryWidths,
+                repetitionsPerSample: sweepRepetitions
+            ) {
+                for width in geometryWidths {
+                    let packet = drawEngine.layoutPacket(
+                        drawPrepared,
+                        maxWidth: width,
+                        lineHeight: fixture.lineHeight,
+                        env: geometryPolicy,
+                        options: lineLimitedLayoutOptions
+                    )
+                    consume(packet.result.lineCount)
+                    consume(packet.result.height)
+                }
+            }
+            let drawDiagnostics = drawEngine.diagnosticsSnapshot()
+            lines.append(
+                "| \(fixture.name) | draw | \(format(drawSweep.median)) | \(format(drawSweep.p95)) | \(percent(drawDiagnostics.layoutPacketCache.hitRate)) | \(drawDiagnostics.layoutPacketReuseCount) | \(drawDiagnostics.layoutPacketCache.currentCost) | draw-ready packet with attributed lines and CTLine materialization |"
+            )
+        }
+
+        lines.append("")
         lines.append("## URL Strategy Sweep")
         lines.append("")
         lines.append("| Strategy | Sweep Median | Sweep p95 | Layout Cache Hit Rate | Avg Lines | Notes |")
@@ -593,27 +659,30 @@ private func makePolicies() -> [BenchmarkPolicy] {
             )
         ),
         BenchmarkPolicy(
-            name: "bucketed-4pt",
+            name: "balanced",
             env: MeasurementEnv(
                 scale: 2,
                 contentSizeCategory: "large",
                 localeIdentifier: Locale(identifier: "en_US").identifier,
-                measurementOptions: PreparedTextMeasurementOptions(
-                    widthNormalizationPolicy: .bucketed(points: 4),
-                    pixelMeasurementPolicy: .exact
-                )
+                measurementOptions: PreparedTextMeasurementOptions(cacheProfile: .balanced)
             )
         ),
         BenchmarkPolicy(
-            name: "pixel-aligned",
+            name: "aggressive",
             env: MeasurementEnv(
                 scale: 2,
                 contentSizeCategory: "large",
                 localeIdentifier: Locale(identifier: "en_US").identifier,
-                measurementOptions: PreparedTextMeasurementOptions(
-                    widthNormalizationPolicy: .exactPixels,
-                    pixelMeasurementPolicy: .alignedToScale
-                )
+                measurementOptions: PreparedTextMeasurementOptions(cacheProfile: .aggressive)
+            )
+        ),
+        BenchmarkPolicy(
+            name: "stickyPrepared",
+            env: MeasurementEnv(
+                scale: 2,
+                contentSizeCategory: "large",
+                localeIdentifier: Locale(identifier: "en_US").identifier,
+                measurementOptions: PreparedTextMeasurementOptions(cacheProfile: .stickyPrepared)
             )
         ),
     ]

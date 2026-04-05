@@ -36,6 +36,9 @@ This repository is positioned as a **stable** library release for its documented
 - Zero-argument `Text.prepared()` is intentionally unsupported. The package does not introspect native SwiftUI `Text`.
 - Experimental `Text.prepared(source:)` is syntax sugar only: the explicit `source` payload is authoritative, and existing `Text` modifiers are not automatically preserved.
 - `PreparedTextObstacleLayouter` is intentionally narrow: it handles repeated-width prepared text with circle and rounded-rect exclusion zones through `PreparedObstacleShape`. It is not a generalized obstacle or magazine-style flow layout engine.
+- `PreparedGeometryPacket` separates measurement-oriented packet ownership from draw-ready packets, but it does not promise zero shaping work or a second rendering engine. It is a cache/materialization split, not a new layout model.
+- Public truncation hooks such as `PreparedTruncationToken`, `PreparedGeometryPacket.visibleTextRange`, and `PreparedLabelView.isTruncated()` are read-only utilities. They do not become a full "read more" framework or an editor selection surface.
+- `PreparedTextLineBreakStrategy.urlFriendly` now preserves structured delimiter-aware breaks more often for mid-line URL/social-token entry, but the package still does not claim browser-grade URL, punctuation, CJK, or bidi parity.
 
 ## Cache And Runtime Limits
 
@@ -43,6 +46,8 @@ This repository is positioned as a **stable** library release for its documented
 - Performance claims are scoped to repeated-width read-only sizing workloads. Always benchmark inside the adopting app.
 - Attachment identity, placeholder metrics, and resolved metrics now participate in prepared layout reuse through `PreparedAttachmentResolver`, but the repository still does not ship a full async attachment loader / placeholder renderer pipeline or remote media stack.
 - `PreparedTextSourceCoordinateMap` now powers public visible token / annotation / attachment queries and rect helpers, but it is still not a full editor coordinate model and can fall back to best-effort mapping when whitespace normalization changes source/display correspondence.
+- `PreparedTextCacheProfile` is a narrow preset layer over real measurement options. It does not change layout semantics, and it should not be treated as a universal tuning oracle for every adopting app.
+- `PreparedTextLegacySupport.adoptionDiagnostics(for:)` is an explicit rollout aid for Stage 0. It is a snapshot of stable adoption reasons, not an always-on telemetry or logging system.
 - Signpost instrumentation exists for hot paths, but it is still lightweight profiling support rather than a complete tracing product.
 - The demo app and showcase surfaces are verification tools for release readiness; they are not a second product surface.
 - The public line-break strategy surface is intentionally narrow. It offers stable selection among supported heuristics, not generalized browser-grade typography control.
