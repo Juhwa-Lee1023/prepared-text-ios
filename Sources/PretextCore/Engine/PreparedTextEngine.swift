@@ -54,7 +54,7 @@ public extension PreparedTextEngine {
 
 public final class DefaultPreparedTextEngine: PreparedTextEngine {
     public let measurer: CachedFramesetterTextMeasurer
-    public let attachmentResolver: PreparedAttachmentResolving?
+    public let attachmentResolver: PreparedAttachmentResolver?
 
     private let segmentMeasurementCache = SegmentMeasurementCache()
     private let preparedTextCache = CostBoundCache<PreparedTextCacheKey, PreparedText>(
@@ -86,7 +86,7 @@ public final class DefaultPreparedTextEngine: PreparedTextEngine {
 
     public init(
         measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer(),
-        attachmentResolver: PreparedAttachmentResolving? = PreparedAttachmentRegistry.shared
+        attachmentResolver: PreparedAttachmentResolver? = PreparedAttachmentRegistry.shared
     ) {
         self.measurer = measurer
         self.attachmentResolver = attachmentResolver

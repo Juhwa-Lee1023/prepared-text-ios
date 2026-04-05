@@ -330,7 +330,7 @@ struct PretextBenchmarkCLI {
                 let tokens = prepared.tokens
                 var matchCount = 0
                 for token in tokens {
-                    matchCount += packet.sourceCoordinateMap.displayedSpans(forSourceUTF16Range: token.sourceUTF16Range).count
+                    matchCount += packet.sourceCoordinateMap.displayedRects(for: token).count
                 }
                 consume(matchCount)
             }
@@ -344,8 +344,8 @@ struct PretextBenchmarkCLI {
         lines.append("")
         lines.append("## Obstacle Layout Sweep")
         lines.append("")
-        lines.append("| Fixture | Sweep Median | Sweep p95 | Rows | Split Rows | Notes |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | --- |")
+        lines.append("| Fixture | Shape | Sweep Median | Sweep p95 | Rows | Split Rows | Notes |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | --- |")
 
         if let obstacleFixture = fixtures.first(where: { $0.name == "token-heavy" }) {
             let textSystem = PreparedTextSystem(
@@ -390,7 +390,51 @@ struct PretextBenchmarkCLI {
                 minimumSpanWidth: 30
             )
             lines.append(
-                "| \(obstacleFixture.name) | \(format(sweep.median)) | \(format(sweep.p95)) | \(sampleResult.rowCount) | \(sampleResult.snapshot.splitRowCount) | circle-only exclusion zones over prepared line walking |"
+                "| \(obstacleFixture.name) | circle | \(format(sweep.median)) | \(format(sweep.p95)) | \(sampleResult.rowCount) | \(sampleResult.snapshot.splitRowCount) | avatar-style circle exclusion over prepared line walking |"
+            )
+
+            let roundedRectSweep = sweepMeasurements(
+                sampleCount: iterations,
+                widths: widths,
+                repetitionsPerSample: sweepRepetitions
+            ) {
+                for width in widths {
+                    let result = layouter.layout(
+                        prepared: prepared,
+                        in: CGRect(x: 0, y: 0, width: width, height: 220),
+                        obstacles: [
+                            PreparedObstacle(
+                                roundedRect: PreparedTextObstacleRoundedRect(
+                                    rect: CGRect(x: width * 0.5, y: 58, width: 84, height: 96),
+                                    cornerRadius: 22
+                                )
+                            ),
+                        ],
+                        lineHeight: obstacleFixture.lineHeight,
+                        obstaclePadding: 12,
+                        minimumSpanWidth: 30
+                    )
+                    consume(result.fragments.count)
+                    consume(result.snapshot.splitRowCount)
+                }
+            }
+            let roundedRectSample = layouter.layout(
+                prepared: prepared,
+                in: CGRect(x: 0, y: 0, width: obstacleFixture.primaryWidth, height: 220),
+                obstacles: [
+                    PreparedObstacle(
+                        roundedRect: PreparedTextObstacleRoundedRect(
+                            rect: CGRect(x: obstacleFixture.primaryWidth * 0.5, y: 58, width: 84, height: 96),
+                            cornerRadius: 22
+                        )
+                    ),
+                ],
+                lineHeight: obstacleFixture.lineHeight,
+                obstaclePadding: 12,
+                minimumSpanWidth: 30
+            )
+            lines.append(
+                "| \(obstacleFixture.name) | rounded-rect | \(format(roundedRectSweep.median)) | \(format(roundedRectSweep.p95)) | \(roundedRectSample.rowCount) | \(roundedRectSample.snapshot.splitRowCount) | narrow panel-style exclusion through `PreparedObstacleShape.roundedRect` |"
             )
         }
 #endif

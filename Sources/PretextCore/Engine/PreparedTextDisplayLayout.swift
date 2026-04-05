@@ -89,28 +89,65 @@ public struct PreparedTextDisplayedSpan: Hashable, Sendable {
     public var lineIndex: Int
     public var displayUTF16Range: NSRange
     public var sourceUTF16Range: NSRange?
+    public var displayRect: CGRect?
     public var isTruncatedLine: Bool
+    public var isExact: Bool
 
     public init(
         lineIndex: Int,
         displayUTF16Range: NSRange,
         sourceUTF16Range: NSRange?,
-        isTruncatedLine: Bool
+        displayRect: CGRect? = nil,
+        isTruncatedLine: Bool,
+        isExact: Bool = false
     ) {
         self.lineIndex = lineIndex
         self.displayUTF16Range = displayUTF16Range
         self.sourceUTF16Range = sourceUTF16Range
+        self.displayRect = displayRect
         self.isTruncatedLine = isTruncatedLine
+        self.isExact = isExact
+    }
+}
+
+public struct PreparedTextDisplayedRect: Hashable, Sendable {
+    public var lineIndex: Int
+    public var rect: CGRect
+    public var displayUTF16Range: NSRange
+    public var sourceUTF16Range: NSRange?
+    public var isTruncatedLine: Bool
+    public var isExact: Bool
+
+    public init(
+        lineIndex: Int,
+        rect: CGRect,
+        displayUTF16Range: NSRange,
+        sourceUTF16Range: NSRange?,
+        isTruncatedLine: Bool,
+        isExact: Bool
+    ) {
+        self.lineIndex = lineIndex
+        self.rect = rect
+        self.displayUTF16Range = displayUTF16Range
+        self.sourceUTF16Range = sourceUTF16Range
+        self.isTruncatedLine = isTruncatedLine
+        self.isExact = isExact
     }
 }
 
 public struct PreparedTextSourceCoordinateSpan: Hashable, Sendable {
     public var displayUTF16Range: NSRange
     public var sourceUTF16Range: NSRange?
+    public var displayRect: CGRect?
 
-    public init(displayUTF16Range: NSRange, sourceUTF16Range: NSRange?) {
+    public init(
+        displayUTF16Range: NSRange,
+        sourceUTF16Range: NSRange?,
+        displayRect: CGRect? = nil
+    ) {
         self.displayUTF16Range = displayUTF16Range
         self.sourceUTF16Range = sourceUTF16Range
+        self.displayRect = displayRect
     }
 }
 
@@ -121,6 +158,7 @@ public struct PreparedTextSourceCoordinateLine: Hashable, Sendable {
     public var consumedSourceUTF16Range: NSRange
     public var sourceSpans: [PreparedTextSourceCoordinateSpan]
     public var isTruncated: Bool
+    public var displayFrame: CGRect
 
     public init(
         lineIndex: Int,
@@ -128,7 +166,8 @@ public struct PreparedTextSourceCoordinateLine: Hashable, Sendable {
         displayUTF16Length: Int,
         consumedSourceUTF16Range: NSRange,
         sourceSpans: [PreparedTextSourceCoordinateSpan],
-        isTruncated: Bool
+        isTruncated: Bool,
+        displayFrame: CGRect = .zero
     ) {
         self.lineIndex = lineIndex
         self.fragment = fragment
@@ -136,6 +175,7 @@ public struct PreparedTextSourceCoordinateLine: Hashable, Sendable {
         self.consumedSourceUTF16Range = consumedSourceUTF16Range
         self.sourceSpans = sourceSpans
         self.isTruncated = isTruncated
+        self.displayFrame = displayFrame
     }
 
     public var visibleSourceUTF16Ranges: [NSRange] {
@@ -171,6 +211,14 @@ public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
         lines.first { $0.lineIndex == index }
     }
 
+    public func displayedLineFrame(at index: Int) -> CGRect? {
+        line(at: index)?.displayFrame
+    }
+
+    public func sourceUTF16Ranges(onDisplayedLine lineIndex: Int) -> [NSRange] {
+        line(at: lineIndex)?.visibleSourceUTF16Ranges ?? []
+    }
+
     public func displayedSpans(forSourceUTF16Range sourceUTF16Range: NSRange) -> [PreparedTextDisplayedSpan] {
         guard sourceUTF16Range.length > 0 else {
             return []
@@ -188,7 +236,10 @@ public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
                 }
 
                 let displayRange: NSRange
-                if mappingMode == .exact, sourceRange.length == span.displayUTF16Range.length {
+                let canResolveExactDisplayRange = mappingMode == .exact &&
+                    sourceRange.length == span.displayUTF16Range.length
+                let isExact = canResolveExactDisplayRange && NSEqualRanges(intersection, sourceRange)
+                if canResolveExactDisplayRange {
                     let delta = intersection.location - sourceRange.location
                     displayRange = NSRange(
                         location: span.displayUTF16Range.location + delta,
@@ -203,13 +254,45 @@ public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
                         lineIndex: line.lineIndex,
                         displayUTF16Range: displayRange,
                         sourceUTF16Range: intersection,
-                        isTruncatedLine: line.isTruncated
+                        displayRect: span.displayRect,
+                        isTruncatedLine: line.isTruncated,
+                        isExact: isExact
                     )
                 )
             }
         }
 
         return matches
+    }
+
+    public func displayedRects(forSourceUTF16Range sourceUTF16Range: NSRange) -> [PreparedTextDisplayedRect] {
+        displayedRects(forSourceUTF16Range: sourceUTF16Range, onLine: nil)
+    }
+
+    public func displayedRects(
+        forSourceUTF16Range sourceUTF16Range: NSRange,
+        onLine lineIndex: Int?
+    ) -> [PreparedTextDisplayedRect] {
+        guard sourceUTF16Range.length > 0 else {
+            return []
+        }
+
+        return displayedSpans(forSourceUTF16Range: sourceUTF16Range).compactMap { span in
+            if let lineIndex, span.lineIndex != lineIndex {
+                return nil
+            }
+            guard let rect = span.displayRect, rect.isNull == false, rect.isEmpty == false else {
+                return nil
+            }
+            return PreparedTextDisplayedRect(
+                lineIndex: span.lineIndex,
+                rect: rect,
+                displayUTF16Range: span.displayUTF16Range,
+                sourceUTF16Range: span.sourceUTF16Range,
+                isTruncatedLine: span.isTruncatedLine,
+                isExact: span.isExact
+            )
+        }
     }
 
     public func sourceUTF16Ranges(
@@ -268,6 +351,18 @@ public struct PreparedTextSourceCoordinateMap: Hashable, Sendable {
 
     public func visibleAttachmentSpans(in prepared: PreparedText) -> [PreparedAttachmentSpan] {
         prepared.attachmentSpans.filter { isSourceRangeVisible($0.sourceUTF16Range) }
+    }
+
+    public func displayedRects(for token: PreparedToken) -> [PreparedTextDisplayedRect] {
+        displayedRects(forSourceUTF16Range: token.sourceUTF16Range)
+    }
+
+    public func displayedRects(for annotation: PreparedAnnotation) -> [PreparedTextDisplayedRect] {
+        displayedRects(forSourceUTF16Range: annotation.sourceUTF16Range)
+    }
+
+    public func displayedRects(for attachmentSpan: PreparedAttachmentSpan) -> [PreparedTextDisplayedRect] {
+        displayedRects(forSourceUTF16Range: attachmentSpan.sourceUTF16Range)
     }
 }
 
@@ -335,16 +430,33 @@ public struct PreparedTextDisplayPacket {
     }
 
     public var sourceCoordinateMap: PreparedTextSourceCoordinateMap {
-        PreparedTextSourceCoordinateMap(
+        var originY: CGFloat = 0
+        return PreparedTextSourceCoordinateMap(
             mappingMode: sourceCoordinateMappingMode,
             lines: lines.enumerated().map { index, line in
-                PreparedTextSourceCoordinateLine(
+                defer { originY += line.fragment.blockAdvance }
+                let lineFrame = preparedCoordinateDisplayFrame(
+                    originX: line.originX,
+                    originY: originY,
+                    lineWidth: line.lineWidth,
+                    fragment: line.fragment
+                )
+                return PreparedTextSourceCoordinateLine(
                     lineIndex: index,
                     fragment: line.fragment,
                     displayUTF16Length: line.attributedText.length,
                     consumedSourceUTF16Range: line.consumedSourceUTF16Range,
-                    sourceSpans: line.sourceSpans,
-                    isTruncated: line.isTruncated
+                    sourceSpans: preparedCoordinateSpans(
+                        from: line.sourceSpans,
+                        attributedText: line.attributedText,
+                        ctLine: line.ctLine,
+                        originX: line.originX,
+                        originY: originY,
+                        lineWidth: line.lineWidth,
+                        fragment: line.fragment
+                    ),
+                    isTruncated: line.isTruncated,
+                    displayFrame: lineFrame
                 )
             }
         )
@@ -397,6 +509,10 @@ public extension PreparedToken {
         map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
     }
 
+    func displayedRects(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedRect] {
+        map.displayedRects(for: self)
+    }
+
     func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
         map.isSourceRangeVisible(sourceUTF16Range)
     }
@@ -407,6 +523,10 @@ public extension PreparedAnnotation {
         map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
     }
 
+    func displayedRects(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedRect] {
+        map.displayedRects(for: self)
+    }
+
     func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
         map.isSourceRangeVisible(sourceUTF16Range)
     }
@@ -415,6 +535,10 @@ public extension PreparedAnnotation {
 public extension PreparedAttachmentSpan {
     func displayedSpans(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedSpan] {
         map.displayedSpans(forSourceUTF16Range: sourceUTF16Range)
+    }
+
+    func displayedRects(in map: PreparedTextSourceCoordinateMap) -> [PreparedTextDisplayedRect] {
+        map.displayedRects(for: self)
     }
 
     func isVisible(in map: PreparedTextSourceCoordinateMap) -> Bool {
@@ -1095,15 +1219,156 @@ private struct PreparedTextDisplayLayoutBuilder {
         lineWidth: CGFloat,
         containerWidth: CGFloat
     ) -> CGFloat {
-        switch alignment {
-        case .center:
-            return max((containerWidth - lineWidth) / 2, 0)
-        case .right:
-            return max(containerWidth - lineWidth, 0)
-        case .left, .leading, .trailing, .natural:
-            return 0
-        }
+        preparedCoordinateHorizontalOrigin(
+            alignment: alignment,
+            lineWidth: lineWidth,
+            containerWidth: containerWidth
+        )
     }
+}
+
+func preparedCoordinateHorizontalOrigin(
+    alignment: PreparedTextHorizontalAlignment,
+    lineWidth: CGFloat,
+    containerWidth: CGFloat
+) -> CGFloat {
+    switch alignment {
+    case .center:
+        return max((containerWidth - lineWidth) / 2, 0)
+    case .right:
+        return max(containerWidth - lineWidth, 0)
+    case .left, .leading, .trailing, .natural:
+        return 0
+    }
+}
+
+func preparedCoordinateDisplayFrame(
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> CGRect {
+    let typographicTop = originY + fragment.paragraphSpacingBefore
+    let typographicHeight = max(fragment.ascent + fragment.descent + fragment.leading, 1)
+    return CGRect(x: originX, y: typographicTop, width: lineWidth, height: typographicHeight)
+}
+
+func preparedCoordinateSpans(
+    from spans: [PreparedTextSourceCoordinateSpan],
+    attributedText: NSAttributedString,
+    ctLine: CTLine,
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> [PreparedTextSourceCoordinateSpan] {
+    spans.flatMap { span -> [PreparedTextSourceCoordinateSpan] in
+        guard
+            let sourceRange = span.sourceUTF16Range,
+            sourceRange.length == span.displayUTF16Range.length,
+            sourceRange.length > 1
+        else {
+            return [
+                PreparedTextSourceCoordinateSpan(
+                    displayUTF16Range: span.displayUTF16Range,
+                    sourceUTF16Range: span.sourceUTF16Range,
+                    displayRect: preparedCoordinateRect(
+                        for: span.displayUTF16Range,
+                        ctLine: ctLine,
+                        originX: originX,
+                        originY: originY,
+                        lineWidth: lineWidth,
+                        fragment: fragment
+                    )
+                ),
+            ]
+        }
+
+        let displayNSString = attributedText.string as NSString
+        let spanEnd = NSMaxRange(span.displayUTF16Range)
+        var slices: [PreparedTextSourceCoordinateSpan] = []
+        var cursor = span.displayUTF16Range.location
+
+        while cursor < spanEnd {
+            let displaySlice = displayNSString.rangeOfComposedCharacterSequence(at: cursor)
+            let clampedLength = min(NSMaxRange(displaySlice), spanEnd) - cursor
+            let resolvedDisplaySlice = NSRange(location: cursor, length: max(clampedLength, 0))
+            guard resolvedDisplaySlice.length > 0 else {
+                cursor += 1
+                continue
+            }
+
+            let delta = resolvedDisplaySlice.location - span.displayUTF16Range.location
+            let sourceSlice = NSRange(location: sourceRange.location + delta, length: resolvedDisplaySlice.length)
+            slices.append(
+                PreparedTextSourceCoordinateSpan(
+                    displayUTF16Range: resolvedDisplaySlice,
+                    sourceUTF16Range: sourceSlice,
+                    displayRect: preparedCoordinateRect(
+                        for: resolvedDisplaySlice,
+                        ctLine: ctLine,
+                        originX: originX,
+                        originY: originY,
+                        lineWidth: lineWidth,
+                        fragment: fragment
+                    )
+                )
+            )
+            cursor = NSMaxRange(resolvedDisplaySlice)
+        }
+
+        return slices.isEmpty ? [
+            PreparedTextSourceCoordinateSpan(
+                displayUTF16Range: span.displayUTF16Range,
+                sourceUTF16Range: span.sourceUTF16Range,
+                displayRect: preparedCoordinateRect(
+                    for: span.displayUTF16Range,
+                    ctLine: ctLine,
+                    originX: originX,
+                    originY: originY,
+                    lineWidth: lineWidth,
+                    fragment: fragment
+                )
+            ),
+        ] : slices
+    }
+}
+
+func preparedCoordinateRect(
+    for displayUTF16Range: NSRange,
+    ctLine: CTLine,
+    originX: CGFloat,
+    originY: CGFloat,
+    lineWidth: CGFloat,
+    fragment: LineFragment
+) -> CGRect? {
+    guard displayUTF16Range.length > 0 else {
+        return nil
+    }
+
+    let lineLength = CTLineGetStringRange(ctLine).length
+    let displayEnd = min(NSMaxRange(displayUTF16Range), lineLength)
+    let displayStart = min(max(displayUTF16Range.location, 0), displayEnd)
+    guard displayEnd > displayStart else {
+        return nil
+    }
+
+    let localStart = CGFloat(CTLineGetOffsetForStringIndex(ctLine, displayStart, nil))
+    let localEnd: CGFloat
+    if displayEnd >= lineLength {
+        localEnd = lineWidth
+    } else {
+        localEnd = CGFloat(CTLineGetOffsetForStringIndex(ctLine, displayEnd, nil))
+    }
+
+    let minLocalX = min(localStart, localEnd)
+    let rect = preparedCoordinateDisplayFrame(
+        originX: originX,
+        originY: originY,
+        lineWidth: max(localEnd - localStart, 0),
+        fragment: fragment
+    ).offsetBy(dx: minLocalX, dy: 0)
+    return rect.isNull || rect.isEmpty ? nil : rect
 }
 
 private struct ComposedCharacterTable {

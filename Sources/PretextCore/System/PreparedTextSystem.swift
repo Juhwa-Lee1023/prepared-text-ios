@@ -20,7 +20,7 @@ public final class PreparedTextSystem: NSObject {
 
     public let measurer: CachedFramesetterTextMeasurer
     public let engine: DefaultPreparedTextEngine
-    public let attachmentResolver: PreparedAttachmentResolving?
+    public let attachmentResolver: PreparedAttachmentResolver?
 
     private let invalidationCenter: PreparedInvalidationCenter
     private var observerTokens: [ObserverToken] = []
@@ -28,7 +28,7 @@ public final class PreparedTextSystem: NSObject {
     public init(
         measurer: CachedFramesetterTextMeasurer = CachedFramesetterTextMeasurer(),
         invalidationCenter: PreparedInvalidationCenter = .shared,
-        attachmentResolver: PreparedAttachmentResolving? = PreparedAttachmentRegistry.shared
+        attachmentResolver: PreparedAttachmentResolver? = PreparedAttachmentRegistry.shared
     ) {
         self.measurer = measurer
         self.attachmentResolver = attachmentResolver

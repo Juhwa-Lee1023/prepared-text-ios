@@ -199,7 +199,7 @@ public struct PreparedTextUIKitDemoItem: Hashable {
         )
 
         let attachmentTokenCard = NSMutableAttributedString(
-            string: " \nMedia @ops #prepared-layout keeps a checklist link visible even when the card self-sizes around inline attachment metrics.",
+            string: " \nMedia @ops #prepared-layout keeps checklist link and policy link individually visible even when the card self-sizes around inline attachment metrics.",
             attributes: [.font: bodyFont]
         )
         let demoAttachment = PreparedTextAttachment(
@@ -212,12 +212,27 @@ public struct PreparedTextUIKitDemoItem: Hashable {
         if let image = UIImage(systemName: "paperclip.circle.fill") {
             demoAttachment.image = image
         }
+        PreparedAttachmentRegistry.shared.setAttachmentState(
+            .resolved(
+                demoAttachment.reference,
+                PreparedResolvedAttachment(
+                    bounds: CGRect(x: 0, y: -2, width: 24, height: 18),
+                    contentIdentity: "uikit-demo-paperclip"
+                )
+            ),
+            invalidate: []
+        )
         attachmentTokenCard.addAttribute(.attachment, value: demoAttachment, range: NSRange(location: 0, length: 1))
         attachmentTokenCard.addAttribute(.preparedAttachmentReference, value: demoAttachment.reference, range: NSRange(location: 0, length: 1))
         let checklistRange = (attachmentTokenCard.string as NSString).range(of: "checklist link")
         if checklistRange.location != NSNotFound, checklistRange.length > 0 {
             attachmentTokenCard.addAttribute(.link, value: URL(string: "https://example.com/checklist")!, range: checklistRange)
             attachmentTokenCard.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: checklistRange)
+        }
+        let policyRange = (attachmentTokenCard.string as NSString).range(of: "policy link")
+        if policyRange.location != NSNotFound, policyRange.length > 0 {
+            attachmentTokenCard.addAttribute(.link, value: URL(string: "https://example.com/policy")!, range: policyRange)
+            attachmentTokenCard.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: policyRange)
         }
 
         let baseItems = [
@@ -319,8 +334,8 @@ public struct PreparedTextUIKitDemoItem: Hashable {
             ),
             PreparedTextUIKitDemoItem(
                 title: "Prepared Structure",
-                subtitle: "Inline attachment, mention, hashtag, and link",
-                note: "Phase 3 keeps attachment metrics, token inspection, and visible-range mapping in the same prepared surface.",
+                subtitle: "Inline attachment, mention, hashtag, and multi-link accessibility",
+                note: "Round 1 keeps attachment resolver state, per-link accessibility, and visible-range geometry in the same prepared surface.",
                 body: attachmentTokenCard,
                 surfaceMode: .stage1Prepared,
                 numberOfLines: 3,
@@ -330,7 +345,7 @@ public struct PreparedTextUIKitDemoItem: Hashable {
                     UIColor(red: 0.95, green: 0.93, blue: 0.99, alpha: 1.0),
                     UIColor(red: 0.19, green: 0.15, blue: 0.27, alpha: 1.0)
                 ),
-                capabilityTags: ["Attachment", "@mention", "#hashtag", "Coordinate map"],
+                capabilityTags: ["Attachment", "@mention", "#hashtag", "AX links"],
                 sourceID: PreparedTextSourceID("uikit-prepared-structure")
             ),
         ]
