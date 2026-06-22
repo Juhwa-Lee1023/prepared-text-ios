@@ -17,7 +17,7 @@ jobs:
     name: validate-pr-metadata
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Validate PR title and body
         run: python3 scripts/check-pr-metadata.py --event-json "$GITHUB_EVENT_PATH"
